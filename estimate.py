@@ -352,57 +352,41 @@ def find_cheapest_provider(
     Args:
         vms: List of VM objects
         all_provider_pricing: All provider pricing loaded from CSV
-                             Structure: {provider: {openstack_flavor: {flavor, cores, memory_gb, gpu, price}}}
 
     Returns:
         Tuple of (best_provider_name, total_cost, vm_costs_dict)
         Where vm_costs_dict = {vm_name: (cost, flavor)}
         Returns (None, None, {}) if no provider can support all VMs
     """
-    provider_costs = {}
-    provider_vm_details = {}
+    cheapest_provider = None
+    cheapest_total = float('inf')
+    cheapest_vm_details = {}
 
-    for provider, provider_flavors in all_provider_pricing.items():
-        total_cost = 0.0
+    for provider in all_provider_pricing:
+        total = 0.0
         vm_details = {}
         can_support_all = True
 
         for vm in vms:
-            if vm.flavor not in provider_flavors:
+            cost = vm.get_cost(provider)
+            if cost is None:
+                # Provider can't support this VM
                 can_support_all = False
                 break
 
-            provider_instance = provider_flavors[vm.flavor]
+            total += cost
+            flavor_name = all_provider_pricing[provider][vm.flavor]["flavor"]
+            vm_details[vm.name] = (cost, flavor_name)
 
-            # Calculate cost: base price + additional storage
-            flavor_compute_price = provider_instance.get("price", 0)
-            boot_storage_gb = provider_instance.get("boot_storage_gb", 0)
-            storage_price = provider_instance.get("storage_price", 0)
-            additional_storage_gb = max(0, vm.storage_gb - boot_storage_gb)
-            cost = flavor_compute_price + (additional_storage_gb * storage_price)
+        if can_support_all and total < cheapest_total:
+            cheapest_total = total
+            cheapest_provider = provider
+            cheapest_vm_details = vm_details
 
-            # GPU check: If the OpenStack flavor has a GPU (e.g., gpu.a100.x1),
-            # the matched provider flavor must support it. We assume if the provider
-            # has a matching flavor, it supports the required GPUs (since it's in the
-            # Matched_OpenStack_Flavor column, which explicitly maps GPU flavors).
-            # The GPU field in provider_instance is only set if it has its own GPU specs.
-
-            total_cost += cost
-            vm_details[vm.name] = (cost, provider_instance["flavor"])
-
-        # Only consider this provider if it can support all VMs
-        if can_support_all:
-            provider_costs[provider] = total_cost
-            provider_vm_details[provider] = vm_details
-
-    if not provider_costs:
+    if cheapest_provider is None:
         return None, None, {}
 
-    # Find the provider with the lowest total cost
-    best_provider = min(provider_costs, key=provider_costs.get)
-    best_cost = provider_costs[best_provider]
-
-    return best_provider, best_cost, provider_vm_details[best_provider]
+    return cheapest_provider, cheapest_total, cheapest_vm_details
 
 
 def find_best_provider(vms: List[VM], all_provider_pricing: Dict) -> Optional[str]:
@@ -413,30 +397,12 @@ def find_best_provider(vms: List[VM], all_provider_pricing: Dict) -> Optional[st
     Args:
         vms: List of VMs
         all_provider_pricing: All providers' pricing data
-                             Structure: {provider: {openstack_flavor: {flavor, cores, memory_gb, gpu, price}}}
 
     Returns:
         Provider name with lowest total cost, or None if no provider supports all VMs
     """
-    provider_costs = {}
-
-    for provider, provider_flavors in all_provider_pricing.items():
-        total_cost = 0.0
-        can_support_all = True
-
-        for vm in vms:
-            if vm.flavor not in provider_flavors:
-                can_support_all = False
-                break
-            total_cost += provider_flavors[vm.flavor]["price"]
-
-        if can_support_all:
-            provider_costs[provider] = total_cost
-
-    if not provider_costs:
-        return None
-
-    return min(provider_costs, key=provider_costs.get)
+    best_provider, _, _ = find_cheapest_provider(vms, all_provider_pricing)
+    return best_provider
 
 
 def populate_vm_comparison_costs(

@@ -363,70 +363,13 @@ def find_cheapest_provider(
     return cheapest_provider
 
 
-def build_comparison_data(
-    vms: List[VM], provider_pricing: Dict, comparison_provider: str
-) -> Dict:
-    """
-    Build a standardized comparison data structure for all report formats.
-
-    Args:
-        vms: List of VMs to compare
-        provider_pricing: Provider pricing dict from load_pricing_config()
-        comparison_provider: Provider to compare against or 'cheapest'
-
-    Returns:
-        Dict with structure:
-        {
-            'provider': str (provider name),
-            'total_cost': float (total cost for all VMs),
-            'vm_costs': {vm_name: (cost, flavor), ...}
-        }
-        Returns empty dict if no comparison or provider not available
-    """
-    if comparison_provider == "none":
-        return {}
-
-    # Get the provider to use
-    if comparison_provider == "cheapest":
-        provider = find_cheapest_provider(vms, provider_pricing)
-        if provider is None:
-            return {}
-    else:
-        provider = comparison_provider
-        if provider not in provider_pricing:
-            return {}
-
-    # Calculate total cost and build vm_details
-    total_cost = 0.0
-    vm_details = {}
-    for vm in vms:
-        cost = vm.get_cost(provider)
-        if cost is not None:
-            flavor_name = provider_pricing[provider][vm.flavor]["flavor"]
-            total_cost += cost
-            vm_details[vm.name] = (cost, flavor_name)
-
-    return {
-        "provider": provider,
-        "total_cost": total_cost if vm_details else None,
-        "vm_costs": vm_details,
-    }
-
-
 def generate_table_report(
     vms: List[VM],
-    comparison_provider: str,
+    provider: Optional[str],
+    provider_display: str,
     provider_pricing: Dict,
 ) -> str:
     """Generate a formatted table report"""
-    # Determine which provider to use
-    if comparison_provider == "cheapest":
-        provider = find_cheapest_provider(vms, provider_pricing)
-        provider_display = "CHEAPEST" if provider else "N/A"
-    else:
-        provider = comparison_provider if comparison_provider != "none" else None
-        provider_display = comparison_provider.upper() if provider else "N/A"
-
     # Build headers
     headers = [
         "VM Name",
@@ -507,18 +450,11 @@ def generate_table_report(
 
 def generate_csv_report(
     vms: List[VM],
-    comparison_provider: str,
+    provider: Optional[str],
+    provider_display: str,
     provider_pricing: Dict,
 ) -> str:
     """Generate a CSV report"""
-    # Determine which provider to use
-    if comparison_provider == "cheapest":
-        provider = find_cheapest_provider(vms, provider_pricing)
-        provider_display = "CHEAPEST" if provider else ""
-    else:
-        provider = comparison_provider if comparison_provider != "none" else None
-        provider_display = comparison_provider.upper() if provider else ""
-
     output = []
 
     headers = [
@@ -611,21 +547,13 @@ def generate_csv_report(
 
 def generate_json_report(
     vms: List[VM],
+    provider: Optional[str],
     provider_pricing: Dict,
-    comparison_provider: str,
 ) -> str:
     """Generate a JSON report"""
     vms_data = []
     total_os_cost = 0.0
     total_comparison_cost = 0.0
-
-    # Determine which provider to use
-    if comparison_provider == "cheapest":
-        provider = find_cheapest_provider(vms, provider_pricing)
-    elif comparison_provider != "none":
-        provider = comparison_provider
-    else:
-        provider = None
 
     for vm in vms:
         os_cost = vm.get_cost("openstack")
@@ -653,35 +581,22 @@ def generate_json_report(
             if comparison_cost:
                 total_comparison_cost += comparison_cost
 
-            if comparison_provider == "cheapest":
-                vm_data["costs"].update(
-                    {
-                        "best_provider": provider,
-                        "best_flavor": comparison_flavor,
-                        "best_monthly": round(comparison_cost, 2)
-                        if comparison_cost
-                        else None,
-                        "savings_monthly": round(comparison_cost - os_cost, 2)
-                        if comparison_cost
-                        else None,
-                    }
-                )
-            else:
-                vm_data["costs"].update(
-                    {
-                        f"{comparison_provider}_flavor": comparison_flavor,
-                        f"{comparison_provider}_monthly": round(comparison_cost, 2)
-                        if comparison_cost
-                        else None,
-                        "savings_monthly": round(comparison_cost - os_cost, 2)
-                        if comparison_cost
-                        else None,
-                    }
-                )
+            vm_data["costs"].update(
+                {
+                    "comparison_provider": provider,
+                    "comparison_flavor": comparison_flavor,
+                    "comparison_monthly": round(comparison_cost, 2)
+                    if comparison_cost
+                    else None,
+                    "savings_monthly": round(comparison_cost - os_cost, 2)
+                    if comparison_cost
+                    else None,
+                }
+            )
 
         vms_data.append(vm_data)
 
-    # Build summary based on comparison provider
+    # Build summary
     summary = {
         "total_vms": len(vms),
         "total_cores": sum(vm.cores for vm in vms),
@@ -691,34 +606,21 @@ def generate_json_report(
         "total_cost_openstack": round(total_os_cost, 2),
     }
 
-    if comparison_provider != "none":
-        if comparison_provider == "cheapest":
-            summary.update(
-                {
-                    "best_provider": best_provider,
-                    f"total_cost_{comparison_provider}": round(total_comparison_cost, 2)
-                    if total_comparison_cost and total_comparison_cost > 0
-                    else None,
-                    "total_savings": round(total_comparison_cost - total_os_cost, 2)
-                    if total_comparison_cost and total_comparison_cost > 0
-                    else None,
-                }
-            )
-        else:
-            summary.update(
-                {
-                    f"total_cost_{comparison_provider}": round(total_comparison_cost, 2)
-                    if total_comparison_cost > 0
-                    else None,
-                    "total_savings": round(total_comparison_cost - total_os_cost, 2)
-                    if total_comparison_cost > 0
-                    else None,
-                }
-            )
+    if provider:
+        summary.update(
+            {
+                "comparison_provider": provider,
+                "total_cost_comparison": round(total_comparison_cost, 2)
+                if total_comparison_cost > 0
+                else None,
+                "total_savings": round(total_comparison_cost - total_os_cost, 2)
+                if total_comparison_cost > 0
+                else None,
+            }
+        )
 
     report = {
         "timestamp": datetime.now().isoformat(),
-        "comparison_provider": comparison_provider,
         "vms": vms_data,
         "summary": summary,
     }
@@ -777,6 +679,16 @@ def main():
         print("No VMs found matching the criteria", file=sys.stderr)
         sys.exit(0)
 
+    # Determine which provider to use for comparison
+    comparison_provider = None
+    provider_display = ""
+    if args.comparison == "cheapest":
+        comparison_provider = find_cheapest_provider(vms, provider_pricing)
+        provider_display = "CHEAPEST" if comparison_provider else ""
+    elif args.comparison != "none":
+        comparison_provider = args.comparison
+        provider_display = args.comparison.upper()
+
     # Generate reports
     formats = ["table", "csv", "json"] if args.format == "all" else [args.format]
 
@@ -784,15 +696,15 @@ def main():
     for fmt in formats:
         if fmt == "table":
             output_data["table"] = generate_table_report(
-                vms, args.comparison, provider_pricing
+                vms, comparison_provider, provider_display, provider_pricing
             )
         elif fmt == "csv":
             output_data["csv"] = generate_csv_report(
-                vms, args.comparison, provider_pricing
+                vms, comparison_provider, provider_display, provider_pricing
             )
         elif fmt == "json":
             output_data["json"] = generate_json_report(
-                vms, provider_pricing, args.comparison
+                vms, comparison_provider, provider_pricing
             )
 
     # Output results

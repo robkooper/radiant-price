@@ -400,7 +400,7 @@ def generate_table_report(
             vm.ram_mb,
             vm.storage_gb,
             f"{vm.gpu_count}x {vm.gpu_type}" if vm.gpu_type else "-",
-            f"${os_cost:.2f}",
+            f"${os_cost:.2f}" if os_cost is not None else "N/A",
         ]
 
         if provider:
@@ -412,14 +412,15 @@ def generate_table_report(
             row.extend(
                 [
                     comparison_flavor or "N/A",
-                    f"${comparison_cost:.2f}" if comparison_cost else "N/A",
-                    f"${comparison_cost - os_cost:.2f}" if comparison_cost else "N/A",
+                    f"${comparison_cost:.2f}" if comparison_cost is not None else "N/A",
+                    f"${comparison_cost - os_cost:.2f}" if (comparison_cost is not None and os_cost is not None) else "N/A",
                 ]
             )
-            if comparison_cost:
+            if comparison_cost is not None:
                 total_comparison_cost += comparison_cost
 
-        total_os_cost += os_cost
+        if os_cost is not None:
+            total_os_cost += os_cost
         rows.append(row)
 
     # Add summary row
@@ -492,7 +493,7 @@ def generate_csv_report(
             vm.gpu_type or "",
             vm.gpu_count,
             "Yes" if vm.floating_ip else "No",
-            f"{os_cost:.2f}",
+            f"{os_cost:.2f}" if os_cost is not None else "",
         ]
 
         if provider:
@@ -504,14 +505,15 @@ def generate_csv_report(
             row_data.extend(
                 [
                     comparison_flavor,
-                    f"{comparison_cost:.2f}" if comparison_cost else "",
-                    f"{comparison_cost - os_cost:.2f}" if comparison_cost else "",
+                    f"{comparison_cost:.2f}" if comparison_cost is not None else "",
+                    f"{comparison_cost - os_cost:.2f}" if (comparison_cost is not None and os_cost is not None) else "",
                 ]
             )
-            if comparison_cost:
+            if comparison_cost is not None:
                 total_comparison_cost += comparison_cost
 
-        total_os_cost += os_cost
+        if os_cost is not None:
+            total_os_cost += os_cost
         output.append(row_data)
 
     # Add summary
@@ -569,10 +571,11 @@ def generate_json_report(
             if vm.gpu_type
             else None,
             "floating_ip": vm.floating_ip,
-            "costs": {"openstack_monthly": round(os_cost, 2)},
+            "costs": {"openstack_monthly": round(os_cost, 2) if os_cost is not None else None},
         }
 
-        total_os_cost += os_cost
+        if os_cost is not None:
+            total_os_cost += os_cost
 
         if provider:
             comparison_cost = vm.get_cost(provider)
@@ -580,7 +583,7 @@ def generate_json_report(
             if comparison_cost is not None and vm.flavor in provider_pricing[provider]:
                 comparison_flavor = provider_pricing[provider][vm.flavor]["flavor"]
 
-            if comparison_cost:
+            if comparison_cost is not None:
                 total_comparison_cost += comparison_cost
 
             vm_data["costs"].update(
@@ -588,10 +591,10 @@ def generate_json_report(
                     "comparison_provider": provider,
                     "comparison_flavor": comparison_flavor,
                     "comparison_monthly": round(comparison_cost, 2)
-                    if comparison_cost
+                    if comparison_cost is not None
                     else None,
                     "savings_monthly": round(comparison_cost - os_cost, 2)
-                    if comparison_cost
+                    if (comparison_cost is not None and os_cost is not None)
                     else None,
                 }
             )

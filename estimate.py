@@ -15,7 +15,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 from tabulate import tabulate
 
@@ -186,8 +186,8 @@ def detect_gpu(vm_name: str) -> Tuple[Optional[str], int]:
     return None, 0
 
 
-def list_vms(cloud: str, vm_regex: Optional[str] = None) -> List[VM]:
-    """List VMs from OpenStack, optionally filtered by regex"""
+def list_vms(cloud: str, vm_filter: Optional[Union[str, List[str]]] = None) -> List[VM]:
+    """List VMs from OpenStack, optionally filtered by regex pattern(s)"""
     try:
         output = run_openstack_command("server list -f json", cloud)
         servers = json.loads(output)
@@ -196,14 +196,21 @@ def list_vms(cloud: str, vm_regex: Optional[str] = None) -> List[VM]:
         sys.exit(1)
 
     vms = []
-    pattern = re.compile(vm_regex) if vm_regex else None
+    # Compile patterns - handle both single string and list of strings
+    patterns = []
+    if vm_filter:
+        if isinstance(vm_filter, str):
+            patterns = [re.compile(vm_filter)]
+        else:
+            patterns = [re.compile(p) for p in vm_filter]
 
     for server in servers:
         name = server.get("Name", "")
 
-        # Filter by regex if provided
-        if pattern and not pattern.search(name):
-            continue
+        # Filter by regex patterns if provided - match if ANY pattern matches
+        if patterns:
+            if not any(pattern.search(name) for pattern in patterns):
+                continue
 
         # Show progress
         print(f"\rProcessing VM: {name}\033[K", end="", file=sys.stderr, flush=True)
@@ -633,10 +640,10 @@ def main():
         description="Analyze OpenStack environment and generate cost reports"
     )
     parser.add_argument(
-        "vm_regex",
-        nargs="?",
+        "vms",
+        nargs="*",
         default=None,
-        help='Regular expression to filter VMs by name (e.g., "web-.*", "gpu.*")',
+        help='VM name patterns (regex). Can specify multiple patterns - VMs matching ANY pattern will be included (e.g., "web-.*" "gpu-.*")',
     )
     parser.add_argument(
         "--cloud",
@@ -669,11 +676,16 @@ def main():
     provider_pricing = load_all_pricing_data()
 
     # List VMs
-    print(
-        f"Listing VMs" + (f" matching: {args.vm_regex}" if args.vm_regex else ""),
-        file=sys.stderr,
-    )
-    vms = list_vms(args.cloud, args.vm_regex if args.vm_regex else None)
+    if args.vms:
+        if len(args.vms) == 1:
+            print(f"Listing VMs matching: {args.vms[0]}", file=sys.stderr)
+            vms = list_vms(args.cloud, vm_filter=args.vms[0])
+        else:
+            print(f"Listing VMs: {', '.join(args.vms)}", file=sys.stderr)
+            vms = list_vms(args.cloud, vm_filter=args.vms)
+    else:
+        print("Listing VMs", file=sys.stderr)
+        vms = list_vms(args.cloud, vm_filter=None)
 
     if not vms:
         print("No VMs found matching the criteria", file=sys.stderr)

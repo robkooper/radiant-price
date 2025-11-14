@@ -359,7 +359,14 @@ def estimate_cost_by_provider(
     # Look up the provider pricing for this VM's OpenStack flavor
     if vm.flavor in provider_pricing:
         provider_instance = provider_pricing[vm.flavor]
-        cost = calculate_vm_cost(vm, provider_instance)
+
+        # Calculate cost: base price + additional storage
+        flavor_compute_price = provider_instance.get("price", 0)
+        boot_storage_gb = provider_instance.get("boot_storage_gb", 0)
+        storage_price = provider_instance.get("storage_price", 0)
+        additional_storage_gb = max(0, vm.storage_gb - boot_storage_gb)
+        cost = flavor_compute_price + (additional_storage_gb * storage_price)
+
         return cost, provider_instance["flavor"]
 
     # No match found
@@ -399,7 +406,13 @@ def find_cheapest_provider(
                 break
 
             provider_instance = provider_flavors[vm.flavor]
-            cost = calculate_vm_cost(vm, provider_instance)
+
+            # Calculate cost: base price + additional storage
+            flavor_compute_price = provider_instance.get("price", 0)
+            boot_storage_gb = provider_instance.get("boot_storage_gb", 0)
+            storage_price = provider_instance.get("storage_price", 0)
+            additional_storage_gb = max(0, vm.storage_gb - boot_storage_gb)
+            cost = flavor_compute_price + (additional_storage_gb * storage_price)
 
             # GPU check: If the OpenStack flavor has a GPU (e.g., gpu.a100.x1),
             # the matched provider flavor must support it. We assume if the provider

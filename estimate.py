@@ -218,6 +218,9 @@ def list_vms(cloud: str, vm_regex: Optional[str] = None) -> List[VM]:
         if pattern and not pattern.search(name):
             continue
 
+        # Show progress
+        print(f"\rProcessing VM: {name}\033[K", end="", file=sys.stderr, flush=True)
+
         # Get detailed server info
         try:
             detail_output = run_openstack_command(f"server show {name} -f json", cloud)
@@ -330,6 +333,9 @@ def list_vms(cloud: str, vm_regex: Optional[str] = None) -> List[VM]:
             floating_ip=has_floating_ip,
         )
         vms.append(vm)
+
+    # Clear progress line and show final count
+    print(f"\rFound {len(vms)} VMs\033[K", file=sys.stderr)
 
     return sorted(vms, key=lambda x: x.name)
 
@@ -881,8 +887,6 @@ def main():
     if not vms:
         print("No VMs found matching the criteria", file=sys.stderr)
         sys.exit(0)
-
-    print(f"Found {len(vms)} VMs", file=sys.stderr)
 
     # Populate comparison costs for each VM
     populate_vm_comparison_costs(vms, provider_pricing, args.comparison)

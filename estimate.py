@@ -868,13 +868,7 @@ def main():
     print(f"Connecting to OpenStack cloud: {args.cloud}", file=sys.stderr)
 
     # Load provider pricing from pricing.csv
-    if args.comparison == "cheapest":
-        print("Loading all provider pricing to find cheapest option", file=sys.stderr)
-    else:
-        print(
-            f"Loading {args.comparison.upper()} pricing from pricing.csv",
-            file=sys.stderr,
-        )
+    print("Loading prices from pricing.csv", file=sys.stderr)
     provider_pricing = load_all_pricing_data()
 
     # List VMs

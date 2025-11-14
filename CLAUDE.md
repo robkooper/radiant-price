@@ -53,10 +53,10 @@ User Command
     ↓
 estimate.py (CLI)
     ↓
-1. Load pricing.csv → OpenStack flavors + Provider pricing
+1. Load pricing.csv → Single unified PROVIDER_PRICING dict
 2. Query OpenStack CLI → List VMs with resources
-3. Match OpenStack flavors → Provider instances
-4. Calculate costs → OpenStack vs Provider
+3. Determine comparison provider → "cheapest" finds lowest cost (excl. OpenStack)
+4. Calculate costs on-demand → vm.get_cost(provider)
 5. Generate report → Table/CSV/JSON format
 ```
 
@@ -65,16 +65,27 @@ estimate.py (CLI)
 #### 1. estimate.py (Main Analysis Tool)
 
 **Core Functions:**
-- `load_all_pricing_data()` - Loads pricing.csv into memory structures
-- `list_vms(cloud, vm_regex)` - Queries OpenStack for VM inventory
+- `load_all_pricing_data()` - Loads pricing.csv into single unified dict
+- `list_vms(cloud, vm_filter)` - Queries OpenStack for VMs matching patterns
 - `detect_gpu(vm_name)` - Detects GPU type/count from VM naming
-- `estimate_cost_by_provider(vm, provider_pricing)` - Calculates provider costs
-- `find_cheapest_provider(vms, all_provider_pricing)` - Finds lowest-cost provider
-- `generate_table_report()` / `generate_csv_report()` / `generate_json_report()` - Output formatting
+- `find_cheapest_provider(vms, all_provider_pricing)` - Finds lowest-cost provider (excludes OpenStack)
+- `generate_table_report()` / `generate_csv_report()` / `generate_json_report()` - Output formatting (calculate costs on-demand)
 
 **CLI Arguments:**
 ```bash
-python3 estimate.py [vm_regex] --cloud CLOUD --format FORMAT --output FILE --comparison PROVIDER
+python3 estimate.py [vm_patterns...] --cloud CLOUD --format FORMAT --output FILE --comparison PROVIDER
+```
+
+**Examples:**
+```bash
+# Single VM pattern (regex)
+python3 estimate.py "cookiemonster" --comparison cheapest
+
+# Multiple VM patterns (matches ANY pattern)
+python3 estimate.py "cookie.*" "soma.*" --comparison aws
+
+# All VMs
+python3 estimate.py --comparison cheapest
 ```
 
 **Important Data Structures:**
@@ -90,8 +101,24 @@ class VM:
     gpu_type: Optional[str]  # e.g., "A100", "V100"
     gpu_count: int
     floating_ip: bool
-    comparison_flavor: Optional[str]    # Matched provider instance
-    comparison_price: Optional[float]   # Provider monthly cost
+
+    def get_cost(self, provider: str) -> Optional[float]:
+        """Calculate monthly cost for this VM on given provider.
+        Includes base compute price + additional storage costs."""
+```
+
+**Global Pricing Structure:**
+```python
+# Loaded at startup from pricing.csv
+PROVIDER_PRICING = {
+    "openstack": {
+        "gp.medium": {"flavor": "gp.medium", "cores": 2, "memory_gb": 8, ...}
+    },
+    "aws": {
+        "gp.medium": {"flavor": "t3a.large", "cores": 2, "memory_gb": 8, ...}
+    },
+    ...
+}
 ```
 
 #### 2. update.py (Pricing Updater)
@@ -195,18 +222,20 @@ python3 update.py newprovider --dry-run
 ### Modifying estimate.py Logic
 
 **When changing VM detection:**
-- Modify `list_vms()` function (line 289)
+- Modify `list_vms()` function
 - Update OpenStack CLI queries as needed
 - Test with: `python3 estimate.py --cloud software`
 
 **When changing cost calculation:**
-- Modify `calculate_vm_cost()` (line 243)
-- Update `get_cost()` method in VM class (line 197)
+- Modify `VM.get_cost()` method - this is the single place for all cost calculations
+- Cost formula: `base_compute_price + (additional_storage_gb * storage_price_per_gb)`
+- Test: `python3 estimate.py cookiemonster --comparison aws`
 
 **When adding new report formats:**
 - Add new `generate_<format>_report()` function
-- Update CLI choices in `main()` (line 941)
-- Update output handling (line 1012)
+- Report functions simply loop over VMs and call `vm.get_cost(provider)` to calculate on-demand
+- Update CLI choices in `main()`
+- Update output handling in `main()`
 
 ### Updating Pricing Data
 
@@ -394,8 +423,10 @@ with open('pricing.csv') as f:
 1. Check pricing.csv for correct flavor pricing
 2. Verify OpenStack flavor name matches CSV exactly
 3. Check storage calculation: `vm.storage_gb - boot_storage_gb`
-4. Review `calculate_vm_cost()` function logic
-5. Add debug prints: `print(f"VM {vm.name}: flavor={vm.flavor}, cost={cost}", file=sys.stderr)`
+4. Review `VM.get_cost()` method logic - this is the single source of all cost calculations
+5. Add debug prints: `print(f"VM {vm.name}: flavor={vm.flavor}, os_cost={vm.get_cost('openstack')}", file=sys.stderr)`
+6. Verify PROVIDER_PRICING global dict is loaded correctly
+7. Missing costs will return `None` - check if VM flavor exists in PROVIDER_PRICING[provider]
 
 ### Task: Add Support for New Instance Type
 
@@ -644,6 +675,128 @@ python3 estimate.py --cloud software --format json
 - `providers/matcher.py` - Flavor matching algorithm
 - `update.py` - Pricing update orchestration
 
+## Recent Major Simplifications (November 2025)
+
+This section documents the major code simplifications made to the codebase, making it cleaner and more maintainable.
+
+### 1. Unified Pricing Data Structure
+
+**Before:** Multiple separate data structures (`openstack_pricing`, `gpu_specs`, `openstack_flavors`, `provider_pricing`)
+
+**After:** Single unified `PROVIDER_PRICING` global dict
+```python
+PROVIDER_PRICING = {
+    "openstack": {flavor: {...}},
+    "aws": {flavor: {...}},
+    "gcp": {flavor: {...}},
+    ...
+}
+```
+
+**Benefits:**
+- Single source of truth for all pricing data
+- Simpler to query and maintain
+- Reduced memory footprint
+
+### 2. Simplified Cost Calculation API
+
+**Before:** Multiple helper functions (`calculate_vm_cost()`, `estimate_cost_by_provider()`)
+
+**After:** Single method on VM class
+```python
+vm.get_cost("aws")  # Returns Optional[float]
+```
+
+**Benefits:**
+- Clean, simple API
+- Calculates base price + additional storage in one place
+- Easy to understand and debug
+
+### 3. Removed Redundant VM State
+
+**Before:** VMs stored `comparison_flavor` and `comparison_price` fields
+
+**After:** Calculate costs on-demand when needed
+
+**Benefits:**
+- No stale state
+- Always accurate (recalculates with current pricing)
+- Simpler VM dataclass
+
+### 4. Streamlined Report Generation
+
+**Before:** Report functions determined provider, called helper functions, managed state
+
+**After:** Report functions just loop and calculate
+```python
+for vm in vms:
+    os_cost = vm.get_cost("openstack")
+    comparison_cost = vm.get_cost(provider)
+    # Display the costs
+```
+
+**Benefits:**
+- Report functions are pure formatters
+- No business logic in presentation layer
+- Easier to add new report formats
+
+### 5. Provider Determination in main()
+
+**Before:** Each report function determined which provider to use
+
+**After:** Determined once in `main()`, passed to all reports
+
+**Benefits:**
+- Single point where cheapest provider is calculated
+- No duplicate `find_cheapest_provider()` calls
+- Consistent across all report formats
+
+### 6. list_vms() Accepts Multiple Patterns
+
+**Before:** Single regex string parameter
+
+**After:** Optional list of regex patterns
+```python
+list_vms(cloud, vm_filter=["cookie.*", "soma.*"])  # Matches ANY pattern
+list_vms(cloud, vm_filter=["cookiemonster"])       # Single pattern
+list_vms(cloud, vm_filter=None)                    # All VMs
+```
+
+**Benefits:**
+- Can filter for multiple VMs in one command
+- Simpler type signature (no Union[str, List[str]])
+- Consistent interface (always a list or None)
+
+### 7. OpenStack Excluded from find_cheapest_provider()
+
+**Before:** OpenStack was considered in the comparison
+
+**After:** OpenStack explicitly skipped (it's the baseline)
+
+**Benefits:**
+- `--comparison cheapest` now only considers alternative providers
+- Matches user expectations
+- Clearer intent in code
+
+### 8. Graceful Handling of Missing Pricing
+
+**Before:** Crashed with TypeError when flavor not in pricing.csv
+
+**After:** Returns None, displays "N/A" in reports
+
+**Benefits:**
+- Tool continues working even with incomplete pricing data
+- Easy to identify which VMs need pricing added
+- Better user experience
+
+### Key Architectural Principles
+
+1. **Table-First Approach**: Load CSV into single table, build one dict from it
+2. **On-Demand Calculation**: Calculate costs when needed, don't store
+3. **Single Source of Truth**: PROVIDER_PRICING is the only pricing data structure
+4. **Simple APIs**: `vm.get_cost(provider)` is the only cost calculation entry point
+5. **Separation of Concerns**: main() determines provider, reports just format data
+
 ## Changelog Template
 
 When making significant changes, update this section:
@@ -666,9 +819,16 @@ When making significant changes, update this section:
 
 ---
 
-**Document Version:** 1.0
+**Document Version:** 2.0
 **Last Updated:** 2025-11-14
 **Maintained By:** AI Assistants (Claude)
 **Status:** Production Ready
+
+**Version 2.0 Changes:**
+- Updated architecture documentation to reflect simplified codebase
+- Added "Recent Major Simplifications" section documenting 8 major improvements
+- Removed references to deprecated functions (calculate_vm_cost, estimate_cost_by_provider, etc.)
+- Updated CLI examples to show multiple VM pattern support
+- Documented table-first approach and on-demand calculation principles
 
 For questions or updates to this document, modify CLAUDE.md directly and commit changes.

@@ -335,6 +335,7 @@ def find_cheapest_provider(
     """
     Find the provider with the lowest total cost for all VMs.
     Skips providers that don't support all required resources (e.g., GPUs).
+    Does not consider 'openstack' as it is the baseline being compared against.
 
     Args:
         vms: List of VM objects
@@ -347,6 +348,10 @@ def find_cheapest_provider(
     cheapest_total = float('inf')
 
     for provider in all_provider_pricing:
+        # Skip openstack - it's the baseline, not a comparison option
+        if provider == "openstack":
+            continue
+
         total = 0.0
         can_support_all = True
 

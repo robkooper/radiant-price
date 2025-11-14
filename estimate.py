@@ -122,31 +122,36 @@ class VM:
     comparison_flavor: Optional[str] = None
     comparison_price: Optional[float] = None
 
-    def get_cost(self, provider: str, provider_pricing: Dict) -> Optional[float]:
+    def get_cost(self, provider: str) -> Optional[float]:
         """
         Calculate monthly cost for a VM on a given provider.
 
         Args:
             provider: The provider name (e.g., 'openstack', 'aws', 'gcp').
-            provider_pricing: Pricing dictionary for all providers.
-                             Structure: {provider: {flavor: {price, boot_storage_gb, storage_price, ...}}}
 
         Returns:
             The calculated monthly cost, or None if flavor not found for this provider.
         """
         # Check if provider exists
-        if provider not in provider_pricing:
+        if provider not in PROVIDER_PRICING:
             return None
 
         # Check if flavor exists for this provider
-        if self.flavor not in provider_pricing[provider]:
+        if self.flavor not in PROVIDER_PRICING[provider]:
             return None
 
         # Get flavor pricing info
-        flavor_pricing = provider_pricing[provider][self.flavor]
+        flavor_pricing = PROVIDER_PRICING[provider][self.flavor]
 
         # Calculate cost: base price + additional storage beyond boot storage
-        return calculate_vm_cost(self, flavor_pricing)
+        flavor_compute_price = flavor_pricing.get("price", 0)
+        boot_storage_gb = flavor_pricing.get("boot_storage_gb", 0)
+        storage_price = flavor_pricing.get("storage_price", 0)
+
+        additional_storage_gb = max(0, self.storage_gb - boot_storage_gb)
+        additional_storage_cost = additional_storage_gb * storage_price
+
+        return flavor_compute_price + additional_storage_cost
 
     def set_comparison_cost(
         self, flavor: Optional[str], price: Optional[float]
@@ -158,18 +163,6 @@ class VM:
     def get_comparison_cost(self) -> Optional[float]:
         """Get the comparison provider cost for this VM"""
         return self.comparison_price
-
-
-def calculate_vm_cost(vm: VM, flavor_pricing: Dict) -> float:
-    """Calculates total cost for a VM based on flavor pricing info."""
-    flavor_compute_price = flavor_pricing.get("price", 0)
-    boot_storage_gb = flavor_pricing.get("boot_storage_gb", 0)
-    storage_price = flavor_pricing.get("storage_price", 0)
-
-    additional_storage_gb = max(0, vm.storage_gb - boot_storage_gb)
-    additional_storage_cost = additional_storage_gb * storage_price
-
-    return flavor_compute_price + additional_storage_cost
 
 
 def run_openstack_command(cmd: str, cloud: str) -> str:
@@ -571,7 +564,7 @@ def generate_table_report(
     total_comparison_cost = 0.0
 
     for vm in vms:
-        os_cost = vm.get_cost("openstack", provider_pricing)
+        os_cost = vm.get_cost("openstack")
 
         row = [
             vm.name,
@@ -660,7 +653,7 @@ def generate_csv_report(
     total_comparison_cost = 0.0
 
     for vm in vms:
-        os_cost = vm.get_cost("openstack", provider_pricing)
+        os_cost = vm.get_cost("openstack")
         row_data = [
             vm.name,
             vm.flavor,
@@ -741,7 +734,7 @@ def generate_json_report(
         )
 
     for vm in vms:
-        os_cost = vm.get_cost("openstack", provider_pricing)
+        os_cost = vm.get_cost("openstack")
         vm_data = {
             "name": vm.name,
             "flavor": vm.flavor,

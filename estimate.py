@@ -119,8 +119,6 @@ class VM:
     gpu_type: Optional[str] = None
     gpu_count: int = 0
     floating_ip: bool = False
-    comparison_flavor: Optional[str] = None
-    comparison_price: Optional[float] = None
 
     def get_cost(self, provider: str) -> Optional[float]:
         """
@@ -152,17 +150,6 @@ class VM:
         additional_storage_cost = additional_storage_gb * storage_price
 
         return flavor_compute_price + additional_storage_cost
-
-    def set_comparison_cost(
-        self, flavor: Optional[str], price: Optional[float]
-    ) -> None:
-        """Set the comparison provider flavor and price for this VM"""
-        self.comparison_flavor = flavor
-        self.comparison_price = price
-
-    def get_comparison_cost(self) -> Optional[float]:
-        """Get the comparison provider cost for this VM"""
-        return self.comparison_price
 
 
 def run_openstack_command(cmd: str, cloud: str) -> str:
@@ -342,9 +329,7 @@ def list_vms(cloud: str, vm_regex: Optional[str] = None) -> List[VM]:
 
 def find_cheapest_provider(
     vms: List[VM], all_provider_pricing: Dict
-) -> Tuple[
-    Optional[str], Optional[float], Dict[str, Tuple[Optional[float], Optional[str]]]
-]:
+) -> Optional[str]:
     """
     Find the provider with the lowest total cost for all VMs.
     Skips providers that don't support all required resources (e.g., GPUs).
@@ -354,17 +339,13 @@ def find_cheapest_provider(
         all_provider_pricing: All provider pricing loaded from CSV
 
     Returns:
-        Tuple of (best_provider_name, total_cost, vm_costs_dict)
-        Where vm_costs_dict = {vm_name: (cost, flavor)}
-        Returns (None, None, {}) if no provider can support all VMs
+        Provider name with lowest total cost, or None if no provider can support all VMs
     """
     cheapest_provider = None
     cheapest_total = float('inf')
-    cheapest_vm_details = {}
 
     for provider in all_provider_pricing:
         total = 0.0
-        vm_details = {}
         can_support_all = True
 
         for vm in vms:
@@ -373,67 +354,13 @@ def find_cheapest_provider(
                 # Provider can't support this VM
                 can_support_all = False
                 break
-
             total += cost
-            flavor_name = all_provider_pricing[provider][vm.flavor]["flavor"]
-            vm_details[vm.name] = (cost, flavor_name)
 
         if can_support_all and total < cheapest_total:
             cheapest_total = total
             cheapest_provider = provider
-            cheapest_vm_details = vm_details
 
-    if cheapest_provider is None:
-        return None, None, {}
-
-    return cheapest_provider, cheapest_total, cheapest_vm_details
-
-
-def find_best_provider(vms: List[VM], all_provider_pricing: Dict) -> Optional[str]:
-    """
-    Find the provider with the lowest total cost for all VMs.
-    Skips providers that don't support all required resources.
-
-    Args:
-        vms: List of VMs
-        all_provider_pricing: All providers' pricing data
-
-    Returns:
-        Provider name with lowest total cost, or None if no provider supports all VMs
-    """
-    best_provider, _, _ = find_cheapest_provider(vms, all_provider_pricing)
-    return best_provider
-
-
-def populate_vm_comparison_costs(
-    vms: List[VM], provider_pricing: Dict, comparison_provider: str
-) -> None:
-    """
-    Populate comparison_flavor and comparison_price for each VM.
-
-    Args:
-        vms: List of VMs to populate
-        provider_pricing: Provider pricing dict
-        comparison_provider: Provider to use ('cheapest' or specific provider name)
-    """
-    if comparison_provider == "none":
-        return
-
-    # Determine which provider to use
-    if comparison_provider == "cheapest":
-        provider = find_best_provider(vms, provider_pricing)
-        if provider is None:
-            return
-    else:
-        provider = comparison_provider
-
-    # Populate each VM with comparison costs
-    if provider in provider_pricing:
-        for vm in vms:
-            cost = vm.get_cost(provider)
-            if cost is not None:
-                flavor_name = provider_pricing[provider][vm.flavor]["flavor"]
-                vm.set_comparison_cost(flavor_name, cost)
+    return cheapest_provider
 
 
 def build_comparison_data(
@@ -459,36 +386,31 @@ def build_comparison_data(
     if comparison_provider == "none":
         return {}
 
+    # Get the provider to use
     if comparison_provider == "cheapest":
-        best_provider, total_cost, vm_details = find_cheapest_provider(
-            vms, provider_pricing
-        )
-        if best_provider is None:
+        provider = find_cheapest_provider(vms, provider_pricing)
+        if provider is None:
             return {}
-        return {
-            "provider": best_provider,
-            "total_cost": total_cost,
-            "vm_costs": vm_details,
-        }
     else:
-        # Single provider comparison
-        if comparison_provider not in provider_pricing:
+        provider = comparison_provider
+        if provider not in provider_pricing:
             return {}
 
-        total_cost = 0.0
-        vm_details = {}
-        for vm in vms:
-            cost = vm.get_cost(comparison_provider)
-            if cost is not None:
-                flavor_name = provider_pricing[comparison_provider][vm.flavor]["flavor"]
-                total_cost += cost
-                vm_details[vm.name] = (cost, flavor_name)
+    # Calculate total cost and build vm_details
+    total_cost = 0.0
+    vm_details = {}
+    for vm in vms:
+        cost = vm.get_cost(provider)
+        if cost is not None:
+            flavor_name = provider_pricing[provider][vm.flavor]["flavor"]
+            total_cost += cost
+            vm_details[vm.name] = (cost, flavor_name)
 
-        return {
-            "provider": comparison_provider,
-            "total_cost": total_cost if vm_details else None,
-            "vm_costs": vm_details,
-        }
+    return {
+        "provider": provider,
+        "total_cost": total_cost if vm_details else None,
+        "vm_costs": vm_details,
+    }
 
 
 def generate_table_report(
@@ -497,7 +419,15 @@ def generate_table_report(
     provider_pricing: Dict,
 ) -> str:
     """Generate a formatted table report"""
-    # Build headers based on comparison provider
+    # Determine which provider to use
+    if comparison_provider == "cheapest":
+        provider = find_cheapest_provider(vms, provider_pricing)
+        provider_display = "CHEAPEST" if provider else "N/A"
+    else:
+        provider = comparison_provider if comparison_provider != "none" else None
+        provider_display = comparison_provider.upper() if provider else "N/A"
+
+    # Build headers
     headers = [
         "VM Name",
         "Flavor",
@@ -508,12 +438,8 @@ def generate_table_report(
         "OS Cost",
     ]
 
-    # Add comparison columns only if not 'none'
-    if comparison_provider != "none":
-        provider_display = comparison_provider.upper()
-        headers.extend(
-            [f"{provider_display} Flavor", f"{provider_display} Cost", "Savings"]
-        )
+    if provider:
+        headers.extend([f"{provider_display} Flavor", f"{provider_display} Cost", "Savings"])
 
     rows = []
     total_os_cost = 0.0
@@ -532,18 +458,21 @@ def generate_table_report(
             f"${os_cost:.2f}",
         ]
 
-        if comparison_provider != "none":
+        if provider:
+            comparison_cost = vm.get_cost(provider)
+            comparison_flavor = None
+            if comparison_cost is not None and vm.flavor in provider_pricing[provider]:
+                comparison_flavor = provider_pricing[provider][vm.flavor]["flavor"]
+
             row.extend(
                 [
-                    vm.comparison_flavor or "N/A",
-                    f"${vm.comparison_price:.2f}" if vm.comparison_price else "N/A",
-                    f"${vm.comparison_price - os_cost:.2f}"
-                    if vm.comparison_price
-                    else "N/A",
+                    comparison_flavor or "N/A",
+                    f"${comparison_cost:.2f}" if comparison_cost else "N/A",
+                    f"${comparison_cost - os_cost:.2f}" if comparison_cost else "N/A",
                 ]
             )
-            if vm.comparison_price:
-                total_comparison_cost += vm.comparison_price
+            if comparison_cost:
+                total_comparison_cost += comparison_cost
 
         total_os_cost += os_cost
         rows.append(row)
@@ -559,7 +488,7 @@ def generate_table_report(
         f"${total_os_cost:.2f}",
     ]
 
-    if comparison_provider != "none":
+    if provider:
         summary_row.extend(
             [
                 "",
@@ -582,6 +511,14 @@ def generate_csv_report(
     provider_pricing: Dict,
 ) -> str:
     """Generate a CSV report"""
+    # Determine which provider to use
+    if comparison_provider == "cheapest":
+        provider = find_cheapest_provider(vms, provider_pricing)
+        provider_display = "CHEAPEST" if provider else ""
+    else:
+        provider = comparison_provider if comparison_provider != "none" else None
+        provider_display = comparison_provider.upper() if provider else ""
+
     output = []
 
     headers = [
@@ -596,9 +533,7 @@ def generate_csv_report(
         "OpenStack Cost",
     ]
 
-    # Add comparison columns only if not 'none'
-    if comparison_provider != "none":
-        provider_display = comparison_provider.upper()
+    if provider:
         headers.extend(
             [f"{provider_display} Flavor", f"{provider_display} Cost", "Savings"]
         )
@@ -622,18 +557,21 @@ def generate_csv_report(
             f"{os_cost:.2f}",
         ]
 
-        if comparison_provider != "none":
+        if provider:
+            comparison_cost = vm.get_cost(provider)
+            comparison_flavor = ""
+            if comparison_cost is not None and vm.flavor in provider_pricing[provider]:
+                comparison_flavor = provider_pricing[provider][vm.flavor]["flavor"]
+
             row_data.extend(
                 [
-                    vm.comparison_flavor or "",
-                    f"{vm.comparison_price:.2f}" if vm.comparison_price else "",
-                    f"{vm.comparison_price - os_cost:.2f}"
-                    if vm.comparison_price
-                    else "",
+                    comparison_flavor,
+                    f"{comparison_cost:.2f}" if comparison_cost else "",
+                    f"{comparison_cost - os_cost:.2f}" if comparison_cost else "",
                 ]
             )
-            if vm.comparison_price:
-                total_comparison_cost += vm.comparison_price
+            if comparison_cost:
+                total_comparison_cost += comparison_cost
 
         total_os_cost += os_cost
         output.append(row_data)
@@ -651,7 +589,7 @@ def generate_csv_report(
         f"{total_os_cost:.2f}",
     ]
 
-    if comparison_provider != "none":
+    if provider:
         summary.extend(
             [
                 "",
@@ -681,13 +619,13 @@ def generate_json_report(
     total_os_cost = 0.0
     total_comparison_cost = 0.0
 
-    # For 'cheapest', compute best provider once for all VMs
-    best_provider = None
-    best_provider_details = {}
+    # Determine which provider to use
     if comparison_provider == "cheapest":
-        best_provider, total_comparison_cost, best_provider_details = (
-            find_cheapest_provider(vms, provider_pricing)
-        )
+        provider = find_cheapest_provider(vms, provider_pricing)
+    elif comparison_provider != "none":
+        provider = comparison_provider
+    else:
+        provider = None
 
     for vm in vms:
         os_cost = vm.get_cost("openstack")
@@ -706,29 +644,29 @@ def generate_json_report(
 
         total_os_cost += os_cost
 
-        if comparison_provider != "none":
-            if comparison_provider == "cheapest":
-                if vm.name in best_provider_details:
-                    comparison_cost, comparison_flavor = best_provider_details[vm.name]
-                    vm_data["costs"].update(
-                        {
-                            "best_provider": best_provider,
-                            "best_flavor": comparison_flavor,
-                            "best_monthly": round(comparison_cost, 2)
-                            if comparison_cost
-                            else None,
-                            "savings_monthly": round(comparison_cost - os_cost, 2)
-                            if comparison_cost
-                            else None,
-                        }
-                    )
-            else:
-                comparison_cost = vm.get_cost(comparison_provider)
-                comparison_flavor = None
-                if comparison_cost is not None:
-                    if comparison_provider in provider_pricing and vm.flavor in provider_pricing[comparison_provider]:
-                        comparison_flavor = provider_pricing[comparison_provider][vm.flavor]["flavor"]
+        if provider:
+            comparison_cost = vm.get_cost(provider)
+            comparison_flavor = None
+            if comparison_cost is not None and vm.flavor in provider_pricing[provider]:
+                comparison_flavor = provider_pricing[provider][vm.flavor]["flavor"]
 
+            if comparison_cost:
+                total_comparison_cost += comparison_cost
+
+            if comparison_provider == "cheapest":
+                vm_data["costs"].update(
+                    {
+                        "best_provider": provider,
+                        "best_flavor": comparison_flavor,
+                        "best_monthly": round(comparison_cost, 2)
+                        if comparison_cost
+                        else None,
+                        "savings_monthly": round(comparison_cost - os_cost, 2)
+                        if comparison_cost
+                        else None,
+                    }
+                )
+            else:
                 vm_data["costs"].update(
                     {
                         f"{comparison_provider}_flavor": comparison_flavor,
@@ -740,8 +678,6 @@ def generate_json_report(
                         else None,
                     }
                 )
-                if comparison_cost:
-                    total_comparison_cost += comparison_cost
 
         vms_data.append(vm_data)
 
@@ -840,9 +776,6 @@ def main():
     if not vms:
         print("No VMs found matching the criteria", file=sys.stderr)
         sys.exit(0)
-
-    # Populate comparison costs for each VM
-    populate_vm_comparison_costs(vms, provider_pricing, args.comparison)
 
     # Generate reports
     formats = ["table", "csv", "json"] if args.format == "all" else [args.format]

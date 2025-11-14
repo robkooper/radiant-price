@@ -340,39 +340,6 @@ def list_vms(cloud: str, vm_regex: Optional[str] = None) -> List[VM]:
     return sorted(vms, key=lambda x: x.name)
 
 
-def estimate_cost_by_provider(
-    vm: VM, provider_pricing: Dict
-) -> Tuple[Optional[float], Optional[str]]:
-    """
-    Estimate cost for equivalent resources using provider pricing from CSV.
-
-    Uses Matched_OpenStack_Flavor to match OpenStack VMs to provider instances.
-
-    Args:
-        vm: VM object with resource specifications
-        provider_pricing: Provider pricing loaded from CSV, indexed by OpenStack flavor name
-                         Structure: {openstack_flavor: {flavor, cores, memory_gb, gpu, price}}
-
-    Returns:
-        Tuple of (monthly cost estimate, matched provider instance type) or (None, None) if no match
-    """
-    # Look up the provider pricing for this VM's OpenStack flavor
-    if vm.flavor in provider_pricing:
-        provider_instance = provider_pricing[vm.flavor]
-
-        # Calculate cost: base price + additional storage
-        flavor_compute_price = provider_instance.get("price", 0)
-        boot_storage_gb = provider_instance.get("boot_storage_gb", 0)
-        storage_price = provider_instance.get("storage_price", 0)
-        additional_storage_gb = max(0, vm.storage_gb - boot_storage_gb)
-        cost = flavor_compute_price + (additional_storage_gb * storage_price)
-
-        return cost, provider_instance["flavor"]
-
-    # No match found
-    return None, None
-
-
 def find_cheapest_provider(
     vms: List[VM], all_provider_pricing: Dict
 ) -> Tuple[
@@ -496,11 +463,11 @@ def populate_vm_comparison_costs(
 
     # Populate each VM with comparison costs
     if provider in provider_pricing:
-        provider_flavors = provider_pricing[provider]
         for vm in vms:
-            if vm.flavor in provider_flavors:
-                flavor_data = provider_flavors[vm.flavor]
-                vm.set_comparison_cost(flavor_data["flavor"], flavor_data["price"])
+            cost = vm.get_cost(provider)
+            if cost is not None:
+                flavor_name = provider_pricing[provider][vm.flavor]["flavor"]
+                vm.set_comparison_cost(flavor_name, cost)
 
 
 def build_comparison_data(
@@ -539,13 +506,17 @@ def build_comparison_data(
         }
     else:
         # Single provider comparison
+        if comparison_provider not in provider_pricing:
+            return {}
+
         total_cost = 0.0
         vm_details = {}
         for vm in vms:
-            cost, flavor = estimate_cost_by_provider(vm, provider_pricing)
+            cost = vm.get_cost(comparison_provider)
             if cost is not None:
+                flavor_name = provider_pricing[comparison_provider][vm.flavor]["flavor"]
                 total_cost += cost
-                vm_details[vm.name] = (cost, flavor)
+                vm_details[vm.name] = (cost, flavor_name)
 
         return {
             "provider": comparison_provider,
@@ -786,9 +757,12 @@ def generate_json_report(
                         }
                     )
             else:
-                comparison_cost, comparison_flavor = estimate_cost_by_provider(
-                    vm, provider_pricing
-                )
+                comparison_cost = vm.get_cost(comparison_provider)
+                comparison_flavor = None
+                if comparison_cost is not None:
+                    if comparison_provider in provider_pricing and vm.flavor in provider_pricing[comparison_provider]:
+                        comparison_flavor = provider_pricing[comparison_provider][vm.flavor]["flavor"]
+
                 vm_data["costs"].update(
                     {
                         f"{comparison_provider}_flavor": comparison_flavor,

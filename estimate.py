@@ -26,11 +26,8 @@ def load_all_pricing_data():
     Load all pricing configuration from unified pricing.csv file.
 
     Returns:
-        Tuple of (openstack_pricing, provider_pricing, gpu_specs, openstack_flavors)
-        - openstack_pricing: Dict with storage pricing (just 'flash' key)
-        - provider_pricing: Dict of {provider: {openstack_flavor: instance_data}}
-        - gpu_specs: Dict of {gpu_type: {cores, name}}
-        - openstack_flavors: Dict of {flavor: {cores, memory_gb, boot_storage_gb, gpu, price}}
+        Dict of {provider: {openstack_flavor: instance_data}}
+        where instance_data includes: flavor, cores, memory_gb, gpu, price, boot_storage_gb, storage_price
     """
     config_file = "pricing.csv"
 
@@ -59,16 +56,21 @@ def load_all_pricing_data():
                 if not row.get("Matched_OpenStack_Flavor", "").strip():
                     row["Matched_OpenStack_Flavor"] = row["Flavor"].strip()
 
-        # Build data structures from rows
-        openstack_pricing = {}
+        # Build provider_pricing from rows
         provider_pricing = {}
-        gpu_specs = {}
-        openstack_flavors = {}
 
         for row in rows:
             cloud = row["Cloud"].strip()
             flavor = row["Flavor"].strip()
             matched_flavor = row.get("Matched_OpenStack_Flavor", "").strip()
+
+            # Skip flash storage rows
+            if flavor == "flash":
+                continue
+
+            # Skip rows without matched flavor
+            if not matched_flavor:
+                continue
 
             # Parse fields
             cores = int(row["Cores"].strip()) if row["Cores"].strip() else 0
@@ -79,55 +81,29 @@ def load_all_pricing_data():
             price = float(row["Compute_Price_Per_Month"].strip() or 0)
             storage_price = float(row.get("Storage_Price_Per_GB_Per_Month", "").strip() or 0)
 
-            # Handle flash storage pricing
-            if flavor == "flash":
-                openstack_pricing["flash"] = storage_price
-                continue
-
-            # Build openstack_flavors (for flavor lookups during VM listing)
-            if cloud == "openstack":
-                openstack_flavors[flavor] = {
-                    "cores": cores,
-                    "memory_gb": memory_gb,
-                    "boot_storage_gb": boot_storage_gb,
-                    "gpu": gpu,
-                    "price": price,
-                }
-                # Extract GPU specs
-                if gpu and cores > 0:
-                    gpu_specs[gpu] = {"cores": cores, "name": gpu.upper()}
-
             # Build provider_pricing
-            if matched_flavor:
-                if cloud not in provider_pricing:
-                    provider_pricing[cloud] = {}
-                provider_pricing[cloud][matched_flavor] = {
-                    "flavor": flavor,
-                    "cores": cores,
-                    "memory_gb": memory_gb,
-                    "gpu": gpu,
-                    "price": price,
-                    "boot_storage_gb": boot_storage_gb,
-                    "storage_price": storage_price,
-                }
+            if cloud not in provider_pricing:
+                provider_pricing[cloud] = {}
 
-        # Defaults
-        if "flash" not in openstack_pricing:
-            openstack_pricing["flash"] = 0.14
-        if "a100" not in gpu_specs:
-            gpu_specs["a100"] = {"cores": 24, "name": "A100"}
-        if "v100" not in gpu_specs:
-            gpu_specs["v100"] = {"cores": 8, "name": "V100"}
+            provider_pricing[cloud][matched_flavor] = {
+                "flavor": flavor,
+                "cores": cores,
+                "memory_gb": memory_gb,
+                "gpu": gpu,
+                "price": price,
+                "boot_storage_gb": boot_storage_gb,
+                "storage_price": storage_price,
+            }
 
-        return openstack_pricing, provider_pricing, gpu_specs, openstack_flavors
+        return provider_pricing
 
     except Exception as e:
         print(f"Error loading {config_file}: {e}", file=sys.stderr)
         sys.exit(1)
 
 
-# Load OpenStack flavors and GPU specs at startup
-PRICING, _, GPU_SPECS, OPENSTACK_FLAVORS = load_all_pricing_data()
+# Load pricing data at startup
+PROVIDER_PRICING = load_all_pricing_data()
 
 
 @dataclass
@@ -266,8 +242,8 @@ def list_vms(cloud: str, vm_regex: Optional[str] = None) -> List[VM]:
         if isinstance(flavor_info, str):
             # If flavor is a string like "gp.medium (gp.medium)", extract the name
             flavor_name = flavor_info.split("(")[0].strip()
-            if flavor_name in OPENSTACK_FLAVORS:
-                flavor_specs = OPENSTACK_FLAVORS[flavor_name]
+            if flavor_name in PROVIDER_PRICING.get("openstack", {}):
+                flavor_specs = PROVIDER_PRICING["openstack"][flavor_name]
                 cores = flavor_specs["cores"]
                 ram_mb = int(flavor_specs["memory_gb"] * 1024)
             else:
@@ -327,8 +303,8 @@ def list_vms(cloud: str, vm_regex: Optional[str] = None) -> List[VM]:
 
         # Detect GPU - check flavor specs first, then VM name
         gpu_type, gpu_count = None, 0
-        if flavor_name in OPENSTACK_FLAVORS:
-            flavor_gpu = OPENSTACK_FLAVORS[flavor_name].get("gpu")
+        if flavor_name in PROVIDER_PRICING.get("openstack", {}):
+            flavor_gpu = PROVIDER_PRICING["openstack"][flavor_name].get("gpu")
             if flavor_gpu:
                 gpu_type = flavor_gpu.upper()
                 gpu_count = 1  # Default to 1 GPU per flavor if not specified in name
@@ -906,9 +882,7 @@ def main():
             f"Loading {args.comparison.upper()} pricing from pricing.csv",
             file=sys.stderr,
         )
-    openstack_pricing, provider_pricing, gpu_specs, openstack_flavors = (
-        load_all_pricing_data()
-    )
+    provider_pricing = load_all_pricing_data()
 
     # List VMs
     print(

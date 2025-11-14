@@ -158,39 +158,31 @@ class VM:
     comparison_flavor: Optional[str] = None
     comparison_price: Optional[float] = None
 
-    def get_cost(
-        self,
-        provider: str,
-        openstack_pricing: Dict,
-        provider_pricing: Dict,
-        openstack_flavors: Dict,
-    ) -> Optional[float]:
+    def get_cost(self, provider: str, provider_pricing: Dict) -> Optional[float]:
         """
         Calculate monthly cost for a VM on a given provider.
 
         Args:
-            provider: The provider name (e.g., 'openstack', 'aws').
-            openstack_pricing: Pricing dictionary for OpenStack components.
-            provider_pricing: Pricing dictionary for the specified provider.
-            openstack_flavors: Dictionary with OpenStack flavor details and prices.
+            provider: The provider name (e.g., 'openstack', 'aws', 'gcp').
+            provider_pricing: Pricing dictionary for all providers.
+                             Structure: {provider: {flavor: {price, boot_storage_gb, storage_price, ...}}}
 
         Returns:
-            The calculated monthly cost, or None if not available.
+            The calculated monthly cost, or None if flavor not found for this provider.
         """
-        if provider == "openstack":
-            if self.flavor in openstack_flavors:
-                flavor_info = openstack_flavors[self.flavor]
-                pricing_details = {
-                    "price": flavor_info.get("price", 0),
-                    "boot_storage_gb": flavor_info.get("boot_storage_gb", 0),
-                    "storage_price": openstack_pricing.get("flash", 0),
-                }
-                return calculate_vm_cost(self, pricing_details)
+        # Check if provider exists
+        if provider not in provider_pricing:
             return None
 
-        # For other providers, the cost is calculated in estimate_cost_by_provider
-        # and find_cheapest_provider, and stored in vm.comparison_price.
-        return None
+        # Check if flavor exists for this provider
+        if self.flavor not in provider_pricing[provider]:
+            return None
+
+        # Get flavor pricing info
+        flavor_pricing = provider_pricing[provider][self.flavor]
+
+        # Calculate cost: base price + additional storage beyond boot storage
+        return calculate_vm_cost(self, flavor_pricing)
 
     def set_comparison_cost(
         self, flavor: Optional[str], price: Optional[float]
@@ -589,8 +581,7 @@ def build_comparison_data(
 def generate_table_report(
     vms: List[VM],
     comparison_provider: str,
-    openstack_pricing: Dict,
-    openstack_flavors: Dict,
+    provider_pricing: Dict,
 ) -> str:
     """Generate a formatted table report"""
     # Build headers based on comparison provider
@@ -616,7 +607,7 @@ def generate_table_report(
     total_comparison_cost = 0.0
 
     for vm in vms:
-        os_cost = vm.get_cost("openstack", openstack_pricing, {}, openstack_flavors)
+        os_cost = vm.get_cost("openstack", provider_pricing)
 
         row = [
             vm.name,
@@ -675,8 +666,7 @@ def generate_table_report(
 def generate_csv_report(
     vms: List[VM],
     comparison_provider: str,
-    openstack_pricing: Dict,
-    openstack_flavors: Dict,
+    provider_pricing: Dict,
 ) -> str:
     """Generate a CSV report"""
     output = []
@@ -706,7 +696,7 @@ def generate_csv_report(
     total_comparison_cost = 0.0
 
     for vm in vms:
-        os_cost = vm.get_cost("openstack", openstack_pricing, {}, openstack_flavors)
+        os_cost = vm.get_cost("openstack", provider_pricing)
         row_data = [
             vm.name,
             vm.flavor,
@@ -772,8 +762,6 @@ def generate_json_report(
     vms: List[VM],
     provider_pricing: Dict,
     comparison_provider: str,
-    openstack_pricing: Dict,
-    openstack_flavors: Dict,
 ) -> str:
     """Generate a JSON report"""
     vms_data = []
@@ -789,7 +777,7 @@ def generate_json_report(
         )
 
     for vm in vms:
-        os_cost = vm.get_cost("openstack", openstack_pricing, {}, openstack_flavors)
+        os_cost = vm.get_cost("openstack", provider_pricing)
         vm_data = {
             "name": vm.name,
             "flavor": vm.flavor,
@@ -957,19 +945,15 @@ def main():
     for fmt in formats:
         if fmt == "table":
             output_data["table"] = generate_table_report(
-                vms, args.comparison, openstack_pricing, openstack_flavors
+                vms, args.comparison, provider_pricing
             )
         elif fmt == "csv":
             output_data["csv"] = generate_csv_report(
-                vms, args.comparison, openstack_pricing, openstack_flavors
+                vms, args.comparison, provider_pricing
             )
         elif fmt == "json":
             output_data["json"] = generate_json_report(
-                vms,
-                provider_pricing,
-                args.comparison,
-                openstack_pricing,
-                openstack_flavors,
+                vms, provider_pricing, args.comparison
             )
 
     # Output results

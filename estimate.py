@@ -684,7 +684,7 @@ def main():
     provider_display = ""
     if args.comparison == "cheapest":
         comparison_provider = find_cheapest_provider(vms, provider_pricing)
-        provider_display = "CHEAPEST" if comparison_provider else ""
+        provider_display = comparison_provider.upper() if comparison_provider else ""
     elif args.comparison != "none":
         comparison_provider = args.comparison
         provider_display = args.comparison.upper()

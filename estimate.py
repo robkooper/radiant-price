@@ -15,7 +15,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 
 from tabulate import tabulate
 
@@ -186,7 +186,7 @@ def detect_gpu(vm_name: str) -> Tuple[Optional[str], int]:
     return None, 0
 
 
-def list_vms(cloud: str, vm_filter: Optional[Union[str, List[str]]] = None) -> List[VM]:
+def list_vms(cloud: str, vm_filter: Optional[List[str]] = None) -> List[VM]:
     """List VMs from OpenStack, optionally filtered by regex pattern(s)"""
     try:
         output = run_openstack_command("server list -f json", cloud)
@@ -196,13 +196,8 @@ def list_vms(cloud: str, vm_filter: Optional[Union[str, List[str]]] = None) -> L
         sys.exit(1)
 
     vms = []
-    # Compile patterns - handle both single string and list of strings
-    patterns = []
-    if vm_filter:
-        if isinstance(vm_filter, str):
-            patterns = [re.compile(vm_filter)]
-        else:
-            patterns = [re.compile(p) for p in vm_filter]
+    # Compile patterns from list of regex strings
+    patterns = [re.compile(p) for p in vm_filter] if vm_filter else []
 
     for server in servers:
         name = server.get("Name", "")
@@ -679,10 +674,9 @@ def main():
     if args.vms:
         if len(args.vms) == 1:
             print(f"Listing VMs matching: {args.vms[0]}", file=sys.stderr)
-            vms = list_vms(args.cloud, vm_filter=args.vms[0])
         else:
             print(f"Listing VMs: {', '.join(args.vms)}", file=sys.stderr)
-            vms = list_vms(args.cloud, vm_filter=args.vms)
+        vms = list_vms(args.cloud, vm_filter=args.vms)
     else:
         print("Listing VMs", file=sys.stderr)
         vms = list_vms(args.cloud, vm_filter=None)

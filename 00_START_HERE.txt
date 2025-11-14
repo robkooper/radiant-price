@@ -1,0 +1,223 @@
+================================================================================
+  OPENSTACK ANALYZER - START HERE
+================================================================================
+
+Welcome! This is your complete OpenStack environment analysis tool.
+
+If you're new, follow this simple 3-step process:
+
+STEP 1: INSTALL (1 minute)
+────────────────────────────
+  cd /Users/kooper/git/ncsa/rate-calc
+  pip install -r requirements.txt
+
+STEP 2: RUN (1 minute)
+────────────────────────────
+  python openstack_analyzer.py aifarms
+
+  You should see a table with your VMs and costs!
+
+STEP 3: EXPLORE (10 minutes)
+────────────────────────────
+  Read QUICKSTART.md for common commands
+
+================================================================================
+  WHAT THIS TOOL DOES
+================================================================================
+
+✓ Connects to your OpenStack cloud
+✓ Lists all VMs with their resources (cores, storage, etc.)
+✓ Detects GPU VMs automatically (A100, V100)
+✓ Calculates monthly OpenStack costs
+✓ Compares with equivalent AWS costs
+✓ Generates reports in multiple formats (table, CSV, JSON)
+
+================================================================================
+  QUICK EXAMPLES
+================================================================================
+
+Show all VMs:
+  python openstack_analyzer.py aifarms
+
+GPU VMs only:
+  python openstack_analyzer.py cori --vm-regex "gpu.*"
+
+Save as CSV (for Excel):
+  python openstack_analyzer.py aifarms --format csv --output report.csv
+
+Save as JSON (for automation):
+  python openstack_analyzer.py cori --format json --output report.json
+
+================================================================================
+  DOCUMENTATION GUIDE
+================================================================================
+
+New User?           → Read QUICKSTART.md (5 minutes)
+Need Full Guide?    → Read README.md (20 minutes)
+Want to Customize?  → Read CONFIG.md (15 minutes)
+Need More Info?     → Read FEATURES.md or SUMMARY.txt
+
+Quick Help:         → Run: python openstack_analyzer.py --help
+See Examples:       → Read: example_usage.sh
+
+================================================================================
+  KEY FACTS
+================================================================================
+
+Pricing (Monthly):
+  - Instance: $5.46/month per VM
+  - Core: $5.03/month (non-GPU cores only!)
+  - Storage: $0.14/GB/month
+  - A100 GPU: $546.45/month
+  - V100 GPU: $291.34/month
+
+GPU Handling:
+  - A100 has 24 cores (not added to CPU count)
+  - V100 has 8 cores (not added to CPU count)
+  - Detected from VM names (a100, v100, gpu)
+
+Cost Comparison:
+  - Shows OpenStack cost
+  - Shows equivalent AWS cost
+  - Shows savings/additional cost
+
+================================================================================
+  COMMON TASKS
+================================================================================
+
+Task                          Command
+─────────────────────────────────────────────────────────────────────────────
+List all VMs                  python openstack_analyzer.py aifarms
+List GPU VMs                  python openstack_analyzer.py cori --vm-regex "gpu.*"
+Export to CSV                 python openstack_analyzer.py aifarms --format csv --output report.csv
+Export to JSON                python openstack_analyzer.py cori --format json
+Show help                     python openstack_analyzer.py --help
+
+Batch multiple clouds:
+  for cloud in aifarms cori clowder gies; do
+    python openstack_analyzer.py $cloud --format csv --output ${cloud}_report.csv
+  done
+
+================================================================================
+  EXAMPLE OUTPUT
+================================================================================
+
+Table format (default):
+┌────────────┬────────┬───────┬─────────┬──────────┬─────────┐
+│ VM Name    │ Status │ Cores │ Storage │ GPU      │ OS Cost │
+├────────────┼────────┼───────┼─────────┼──────────┼─────────┤
+│ web-001    │ ACTIVE │   4   │  50 GB  │    -     │ $33.00  │
+│ gpu-ml-01  │ ACTIVE │   8   │ 100 GB  │ 1 A100   │ $546.79 │
+│ compute-01 │ ACTIVE │  16   │ 200 GB  │    -     │ $88.26  │
+├────────────┼────────┼───────┼─────────┼──────────┼─────────┤
+│ TOTAL      │        │  28   │ 350 GB  │ 1 A100   │ $668.05 │
+└────────────┴────────┴───────┴─────────┴──────────┴─────────┘
+
+CSV format (Excel):
+VM Name,Status,Cores,Storage,GPU,OpenStack Cost
+web-001,ACTIVE,4,50,-,33.00
+gpu-ml-01,ACTIVE,8,100,1 A100,546.79
+compute-01,ACTIVE,16,200,-,88.26
+TOTAL,,,28,350,1 A100,668.05
+
+JSON format (automation):
+{
+  "vms": [...],
+  "summary": {
+    "total_vms": 3,
+    "total_cores": 28,
+    "total_cost_openstack": 668.05,
+    "total_cost_aws": 1245.32
+  }
+}
+
+================================================================================
+  TROUBLESHOOTING
+================================================================================
+
+Problem: "Error: Could not parse OpenStack server list"
+Solution: Verify OpenStack CLI is installed and credentials are configured
+  Test: openstack --os-cloud=aifarms server list
+
+Problem: GPU not detected
+Solution: Check VM name contains 'gpu', 'a100', or 'v100'
+  Example: gpu-ml-01, a100-server, v100-training ✓
+
+Problem: Costs seem wrong
+Solution: Check core count (GPU cores NOT included), storage in GB, floating IPs
+  Formula: (cores × 5.03) + (storage × 0.14) + gpu_cost + 5.46 (instance)
+
+Problem: Can't install dependencies
+Solution: Make sure you're in the rate-calc directory
+  Try: pip install --upgrade pip && pip install -r requirements.txt
+
+================================================================================
+  NEXT STEPS
+================================================================================
+
+1. Run your first command:
+   python openstack_analyzer.py aifarms
+
+2. Review the output - does it look right?
+
+3. Try a different format:
+   python openstack_analyzer.py aifarms --format csv --output report.csv
+
+4. Read QUICKSTART.md for more examples
+
+5. Set up scheduled reports (see CONFIG.md)
+
+================================================================================
+  FILES IN THIS DIRECTORY
+================================================================================
+
+Core Application:
+  openstack_analyzer.py  - Main application (504 lines)
+  aws_pricing.py        - AWS pricing module (215 lines)
+  requirements.txt      - Python dependencies
+
+Documentation:
+  00_START_HERE.txt     - This file
+  QUICKSTART.md         - Quick start guide
+  README.md             - Complete documentation
+  CONFIG.md             - Configuration guide
+  FEATURES.md           - Feature overview
+  SUMMARY.txt           - Project summary
+  INDEX.md              - Documentation index
+  example_usage.sh      - Usage examples
+
+================================================================================
+  GETTING HELP
+================================================================================
+
+1. Quick help:
+   python openstack_analyzer.py --help
+
+2. Common issues:
+   See Troubleshooting section above
+
+3. More examples:
+   cat example_usage.sh
+
+4. Need to configure pricing?
+   See CONFIG.md
+
+5. Want to understand features?
+   See FEATURES.md
+
+================================================================================
+  YOU'RE READY!
+================================================================================
+
+Everything is installed and ready to use.
+
+Run this command now:
+  python openstack_analyzer.py aifarms
+
+Questions? Check QUICKSTART.md or README.md
+
+================================================================================
+Version: 1.0
+Status: Production Ready
+Created: November 13, 2024
+================================================================================

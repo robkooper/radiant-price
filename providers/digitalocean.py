@@ -7,7 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 
 
-def fetch_digitalocean_pricing() -> Dict[str, Dict]:
+def get_digitalocean_flavor_prices() -> Dict[str, Dict]:
     """
     Fetch DigitalOcean Droplet pricing from pricing calculator page.
 
@@ -146,7 +146,7 @@ def fetch_digitalocean_pricing() -> Dict[str, Dict]:
         return {}
 
 
-def get_digitalocean_storage_price() -> float:
+def get_digitalocean_storage_prices() -> Dict[str, float]:
     """
     Fetch DigitalOcean Block Storage pricing.
 
@@ -154,7 +154,7 @@ def get_digitalocean_storage_price() -> float:
     from the pricing calculator page.
 
     Returns:
-        Storage price per GB per month (e.g., 0.10), or 0.10 as fallback
+        Dict with storage prices per GB per month, e.g., {"flash": 0.10}
     """
     try:
         pricing_page_url = "https://www.digitalocean.com/pricing/calculator"
@@ -176,10 +176,10 @@ def get_digitalocean_storage_price() -> float:
         if matches:
             price = float(matches[0])
             if 0.01 <= price <= 1.0:  # Sanity check
-                return price
+                return {"flash": price}
 
     except Exception:
         pass
 
     # Fallback to known pricing
-    return 0.10
+    return {"flash": 0.10}

@@ -39,7 +39,7 @@ def extract_spec_from_container(
     return None
 
 
-def get_hetzner_storage_price() -> float:
+def get_hetzner_storage_prices() -> Dict[str, float]:
     """
     Fetch Hetzner Block Storage pricing from their website.
 
@@ -47,7 +47,7 @@ def get_hetzner_storage_price() -> float:
     in US locations.
 
     Returns:
-        Storage price per GB per month (e.g., 0.0484), or 0.05 as fallback
+        Dict with storage prices per GB per month, e.g., {"flash": 0.0484}
     """
     try:
         url = "https://www.hetzner.com/cloud"
@@ -74,16 +74,16 @@ def get_hetzner_storage_price() -> float:
             price = float(matches[0])
             # Validate it's a reasonable storage price (between $0.01 and $0.10 per GB)
             if 0.01 <= price <= 0.10:
-                return price
+                return {"flash": price}
 
     except Exception:
         pass
 
     # Fallback to hardcoded value if extraction fails
-    return 0.05
+    return {"flash": 0.05}
 
 
-def fetch_hetzner_pricing() -> Dict[str, Dict]:
+def get_hetzner_flavor_prices() -> Dict[str, Dict]:
     """
     Fetch Hetzner Cloud pricing from their website.
 

@@ -36,19 +36,20 @@ class Color:
 
 
 from providers import (
-    fetch_aws_pricing,
-    fetch_azure_pricing,
-    fetch_digitalocean_pricing,
-    fetch_gcp_pricing,
-    fetch_hetzner_pricing,
-    fetch_linode_pricing,
-    fetch_vultr_pricing,
-    get_aws_storage_price,
-    get_digitalocean_storage_price,
-    get_gcp_storage_price,
-    get_hetzner_storage_price,
-    get_linode_storage_price,
-    get_vultr_storage_price,
+    get_aws_flavor_prices,
+    get_aws_storage_prices,
+    get_azure_flavor_prices,
+    get_azure_storage_prices,
+    get_digitalocean_flavor_prices,
+    get_digitalocean_storage_prices,
+    get_gcp_flavor_prices,
+    get_gcp_storage_prices,
+    get_hetzner_flavor_prices,
+    get_hetzner_storage_prices,
+    get_linode_flavor_prices,
+    get_linode_storage_prices,
+    get_vultr_flavor_prices,
+    get_vultr_storage_prices,
 )
 from providers.matcher import (
     find_matches,
@@ -57,21 +58,33 @@ from providers.matcher import (
 )
 
 PROVIDERS = {
-    "aws": {"fetch": fetch_aws_pricing, "storage_price": get_aws_storage_price},
-    "linode": {
-        "fetch": fetch_linode_pricing,
-        "storage_price": get_linode_storage_price,
+    "aws": {
+        "get_flavors": get_aws_flavor_prices,
+        "get_storage": get_aws_storage_prices,
     },
-    "azure": {"fetch": fetch_azure_pricing, "storage_price": 0.05},
-    "gcp": {"fetch": fetch_gcp_pricing, "storage_price": get_gcp_storage_price},
-    "vultr": {"fetch": fetch_vultr_pricing, "storage_price": get_vultr_storage_price},
-    "hetzner": {
-        "fetch": fetch_hetzner_pricing,
-        "storage_price": get_hetzner_storage_price,
+    "azure": {
+        "get_flavors": get_azure_flavor_prices,
+        "get_storage": get_azure_storage_prices,
     },
     "digitalocean": {
-        "fetch": fetch_digitalocean_pricing,
-        "storage_price": get_digitalocean_storage_price,
+        "get_flavors": get_digitalocean_flavor_prices,
+        "get_storage": get_digitalocean_storage_prices,
+    },
+    "gcp": {
+        "get_flavors": get_gcp_flavor_prices,
+        "get_storage": get_gcp_storage_prices,
+    },
+    "hetzner": {
+        "get_flavors": get_hetzner_flavor_prices,
+        "get_storage": get_hetzner_storage_prices,
+    },
+    "linode": {
+        "get_flavors": get_linode_flavor_prices,
+        "get_storage": get_linode_storage_prices,
+    },
+    "vultr": {
+        "get_flavors": get_vultr_flavor_prices,
+        "get_storage": get_vultr_storage_prices,
     },
 }
 
@@ -335,9 +348,9 @@ Special: openstack [--core PRICE] [--flash PRICE] [--a100 PRICE] [--v100 PRICE]
     # Process each provider
     total_added = 0
     for provider in providers_to_update:
-        # Fetch pricing
-        fetch_func = PROVIDERS[provider]["fetch"]
-        provider_pricing = fetch_func()
+        # Fetch flavor pricing
+        get_flavors_func = PROVIDERS[provider]["get_flavors"]
+        provider_pricing = get_flavors_func()
 
         if not provider_pricing:
             print(f"[{provider.upper()}] ✗ Failed to fetch pricing\n")
@@ -350,11 +363,13 @@ Special: openstack [--core PRICE] [--flash PRICE] [--a100 PRICE] [--v100 PRICE]
             print(f"[{provider.upper()}] ✗ No matches found\n")
             continue
 
-        # Update CSV
-        storage_price = PROVIDERS[provider]["storage_price"]
-        # If storage_price is callable (function), call it to get the price
-        if callable(storage_price):
-            storage_price = storage_price()
+        # Get storage pricing
+        get_storage_func = PROVIDERS[provider]["get_storage"]
+        storage_prices = get_storage_func()
+        storage_price = storage_prices.get(
+            "flash", 0.10
+        )  # Get "flash" price, default to 0.10
+
         added, changes = update_csv_with_matches(
             args.csv,
             provider,

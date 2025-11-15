@@ -1,25 +1,29 @@
 """Cloud provider pricing modules."""
 
-from .aws import fetch_aws_pricing, get_aws_storage_price
-from .azure import fetch_azure_pricing
-from .digitalocean import fetch_digitalocean_pricing, get_digitalocean_storage_price
-from .gcp import fetch_gcp_pricing, get_gcp_storage_price
-from .hetzner import fetch_hetzner_pricing, get_hetzner_storage_price
-from .linode import fetch_linode_pricing, get_linode_storage_price
-from .vultr import fetch_vultr_pricing, get_vultr_storage_price
+from .aws import get_aws_flavor_prices, get_aws_storage_prices
+from .azure import get_azure_flavor_prices, get_azure_storage_prices
+from .digitalocean import (
+    get_digitalocean_flavor_prices,
+    get_digitalocean_storage_prices,
+)
+from .gcp import get_gcp_flavor_prices, get_gcp_storage_prices
+from .hetzner import get_hetzner_flavor_prices, get_hetzner_storage_prices
+from .linode import get_linode_flavor_prices, get_linode_storage_prices
+from .vultr import get_vultr_flavor_prices, get_vultr_storage_prices
 
 __all__ = [
-    "fetch_aws_pricing",
-    "get_aws_storage_price",
-    "fetch_linode_pricing",
-    "get_linode_storage_price",
-    "fetch_azure_pricing",
-    "fetch_gcp_pricing",
-    "get_gcp_storage_price",
-    "fetch_vultr_pricing",
-    "get_vultr_storage_price",
-    "fetch_hetzner_pricing",
-    "get_hetzner_storage_price",
-    "fetch_digitalocean_pricing",
-    "get_digitalocean_storage_price",
+    "get_aws_flavor_prices",
+    "get_aws_storage_prices",
+    "get_azure_flavor_prices",
+    "get_azure_storage_prices",
+    "get_digitalocean_flavor_prices",
+    "get_digitalocean_storage_prices",
+    "get_gcp_flavor_prices",
+    "get_gcp_storage_prices",
+    "get_hetzner_flavor_prices",
+    "get_hetzner_storage_prices",
+    "get_linode_flavor_prices",
+    "get_linode_storage_prices",
+    "get_vultr_flavor_prices",
+    "get_vultr_storage_prices",
 ]

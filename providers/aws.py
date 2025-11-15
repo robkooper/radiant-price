@@ -4,9 +4,10 @@ import json
 from typing import Dict, Optional
 
 import requests
+from bs4 import BeautifulSoup
 
 
-def fetch_aws_pricing(region: str = "us-east-1") -> Dict[str, Dict]:
+def get_aws_flavor_prices(region: str = "us-east-1") -> Dict[str, Dict]:
     """
     Fetch AWS EC2 pricing from ec2instances.info.
 
@@ -141,7 +142,7 @@ def fetch_aws_pricing(region: str = "us-east-1") -> Dict[str, Dict]:
         return {}
 
 
-def get_aws_storage_price(region: str = "us-east-1") -> float:
+def get_aws_storage_prices(region: str = "us-east-1") -> Dict[str, float]:
     """
     Fetch AWS EBS storage pricing from ec2instances.info.
 
@@ -152,7 +153,7 @@ def get_aws_storage_price(region: str = "us-east-1") -> float:
         region: AWS region (default: us-east-1)
 
     Returns:
-        Storage price per GB per month (e.g., 0.10), or 0.10 as fallback
+        Dict with storage prices per GB per month, e.g., {"flash": 0.10}
     """
     try:
         import re
@@ -174,7 +175,7 @@ def get_aws_storage_price(region: str = "us-east-1") -> float:
         if matches:
             price = float(matches[0])
             if 0.01 <= price <= 1.0:  # Sanity check
-                return price
+                return {"flash": price}
 
         # Alternative pattern - look for general purpose EBS pricing
         gp_pattern = r"\$(\d+\.\d+)\s*(?:per|\/)\s*(?:gb-month|gb month|gb\/month)"
@@ -182,10 +183,10 @@ def get_aws_storage_price(region: str = "us-east-1") -> float:
         if alt_matches:
             price = float(alt_matches[0])
             if 0.01 <= price <= 1.0:
-                return price
+                return {"flash": price}
 
     except Exception:
         pass
 
     # Fallback to known US pricing for gp3 volumes
-    return 0.10
+    return {"flash": 0.10}

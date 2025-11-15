@@ -439,12 +439,42 @@ with open('pricing.csv') as f:
 4. Verify GPU specs in pricing.csv (cores, pricing)
 5. Ensure GPU cores excluded from CPU count
 
+### Task: Add or Modify a Cloud Provider
+
+When adding a new cloud provider or changing how providers work:
+
+1. **Implement two functions** in `providers/yourprovider.py`:
+   - `get_<provider>_flavor_prices()` → Returns `Dict[str, Dict]` with compute instance pricing
+   - `get_<provider>_storage_prices()` → Returns `Dict[str, float]` with `"flash"` key
+
+2. **Update provider registration:**
+   - Add exports to `providers/__init__.py`
+   - Add entry to `PROVIDERS` dict in `update.py` (keep alphabetically sorted)
+
+3. **Update both documentation files** (CRITICAL):
+   - **`PROVIDERS.md`** - Add row to Quick Summary table + detailed section with:
+     - Source (dynamic/hardcoded)
+     - API endpoints
+     - Fallback prices
+     - GPU support details
+   - **`CONTRIBUTING.md`** - Update if introducing new patterns or code examples
+
+4. **Test:**
+   - `python3 update.py yourprovider --dry-run`
+   - `python3 update.py yourprovider`
+   - `python3 estimate.py --cloud software --comparison yourprovider`
+
+5. **See:** `PROVIDERS.md` and `CONTRIBUTING.md` for detailed instructions
+
+**Note:** Failing to update `PROVIDERS.md` and `CONTRIBUTING.md` makes the codebase harder to maintain. Always update docs when provider behavior changes.
+
 ### Task: Improve Documentation
 
 1. **User docs:** Update README.md
 2. **Developer docs:** Update this CLAUDE.md file
 3. **Contributor docs:** Update CONTRIBUTING.md
-4. **Code comments:** Add inline documentation for complex logic
+4. **Provider reference:** Update PROVIDERS.md when provider behavior changes
+5. **Code comments:** Add inline documentation for complex logic
 
 ### Task: Optimize Performance
 

@@ -6,7 +6,7 @@ from typing import Dict
 import requests
 
 
-def fetch_linode_pricing() -> Dict[str, Dict]:
+def get_linode_flavor_prices() -> Dict[str, Dict]:
     """
     Fetch Linode Cloud pricing from their API.
 
@@ -65,7 +65,7 @@ def fetch_linode_pricing() -> Dict[str, Dict]:
         return {}
 
 
-def get_linode_storage_price() -> float:
+def get_linode_storage_prices() -> Dict[str, float]:
     """
     Fetch Linode Block Storage pricing.
 
@@ -73,7 +73,7 @@ def get_linode_storage_price() -> float:
     from the pricing page.
 
     Returns:
-        Storage price per GB per month (e.g., 0.10), or 0.10 as fallback
+        Dict with storage prices per GB per month, e.g., {"flash": 0.10}
     """
     try:
         import re
@@ -98,10 +98,10 @@ def get_linode_storage_price() -> float:
         if matches:
             price = float(matches[0])
             if 0.01 <= price <= 1.0:  # Sanity check
-                return price
+                return {"flash": price}
 
     except Exception:
         pass
 
     # Fallback to known pricing ($0.10 per GB per month)
-    return 0.10
+    return {"flash": 0.10}

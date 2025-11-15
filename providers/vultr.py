@@ -7,7 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 
 
-def fetch_vultr_pricing() -> Dict[str, Dict]:
+def get_vultr_flavor_prices() -> Dict[str, Dict]:
     """
     Fetch Vultr Cloud Compute pricing from their website.
 
@@ -147,7 +147,7 @@ def _fetch_vultr_api() -> Dict[str, Dict]:
         return {}
 
 
-def get_vultr_storage_price() -> float:
+def get_vultr_storage_prices() -> Dict[str, float]:
     """
     Fetch Vultr Block Storage pricing.
 
@@ -155,7 +155,7 @@ def get_vultr_storage_price() -> float:
     from the pricing page.
 
     Returns:
-        Storage price per GB per month (e.g., 0.05), or 0.05 as fallback
+        Dict with storage prices per GB per month, e.g., {"flash": 0.05}
     """
     try:
         import re
@@ -182,10 +182,10 @@ def get_vultr_storage_price() -> float:
         if matches:
             price = float(matches[0])
             if 0.01 <= price <= 1.0:  # Sanity check
-                return price
+                return {"flash": price}
 
     except Exception:
         pass
 
     # Fallback to known pricing
-    return 0.05
+    return {"flash": 0.05}

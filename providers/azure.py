@@ -6,7 +6,7 @@ from typing import Dict
 import requests
 
 
-def fetch_azure_pricing(region: str = "us-east") -> Dict[str, Dict]:
+def get_azure_flavor_prices(region: str = "us-east") -> Dict[str, Dict]:
     """
     Fetch Azure Virtual Machines pricing from Azure API.
 
@@ -109,3 +109,24 @@ def fetch_azure_pricing(region: str = "us-east") -> Dict[str, Dict]:
     except Exception as e:
         print(f"      ✗ Error: {e}")
         return {}
+
+
+def get_azure_storage_prices(region: str = "us-east") -> Dict[str, float]:
+    """
+    Get Azure Managed Disks storage pricing.
+
+    Currently returns hardcoded pricing for Standard SSD (E-series).
+    For dynamic pricing, would need to scrape Azure pricing calculator.
+
+    Args:
+        region: Azure region (default: us-east)
+
+    Returns:
+        Dict with storage prices per GB per month, e.g., {"flash": 0.05}
+    """
+    # Azure Managed Disks pricing (as of 2024):
+    # Standard HDD: ~$0.04/GB/month
+    # Standard SSD: ~$0.05/GB/month
+    # Premium SSD: ~$0.13/GB/month
+    # Using Standard SSD as baseline
+    return {"flash": 0.05}

@@ -437,7 +437,7 @@ GCP_PRICING = {
 }
 
 
-def fetch_gcp_pricing() -> Dict[str, Dict]:
+def get_gcp_flavor_prices() -> Dict[str, Dict]:
     """
     Fetch GCP Compute Engine pricing.
 
@@ -458,7 +458,7 @@ def fetch_gcp_pricing() -> Dict[str, Dict]:
         return {}
 
 
-def get_gcp_storage_price() -> float:
+def get_gcp_storage_prices() -> Dict[str, float]:
     """
     Get GCP Persistent Disk storage pricing.
 
@@ -466,7 +466,7 @@ def get_gcp_storage_price() -> float:
     Uses pd-standard pricing for us-central1 region.
 
     Returns:
-        Storage price per GB per month (e.g., 0.04)
+        Dict with storage prices per GB per month, e.g., {"flash": 0.04}
     """
     # GCP Persistent Disk pricing (as of 2024):
     # pd-standard: $0.04/GB/month in us-central1
@@ -474,4 +474,4 @@ def get_gcp_storage_price() -> float:
     # pd-ssd: $0.17/GB/month in us-central1
 
     # Using pd-standard as the baseline (most cost-effective)
-    return 0.04
+    return {"flash": 0.04}

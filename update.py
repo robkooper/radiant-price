@@ -102,7 +102,7 @@ def update_openstack_pricing(
 
     Args:
         csv_file: Path to pricing.csv
-        core_price: New compute price per month for CPU flavors (None to skip)
+        core_price: New compute price per core per month for CPU flavors (None to skip)
         flash_price: New storage price per GB for flash flavor (None to skip)
         a100_price: New monthly price for A100 GPU flavor (None to skip)
         v100_price: New monthly price for V100 GPU flavor (None to skip)
@@ -127,14 +127,26 @@ def update_openstack_pricing(
 
         flavor = row["Flavor"].strip().lower()
 
-        # Determine which price to apply based on flavor
+        # Update storage price for all OpenStack rows if flash_price is provided
+        if flash_price is not None:
+            old_storage_value = row.get("Storage_Price_Per_GB_Per_Month", "")
+            new_storage_price = f"{flash_price:.2f}"
+            if old_storage_value != new_storage_price:
+                changes.append(
+                    {
+                        "flavor": row["Flavor"].strip(),
+                        "field": "Storage_Price_Per_GB_Per_Month",
+                        "old_value": old_storage_value,
+                        "new_value": new_storage_price,
+                    }
+                )
+                row["Storage_Price_Per_GB_Per_Month"] = new_storage_price
+
+        # Determine which compute price to apply based on flavor
         new_price = None
         field_name = "Compute_Price_Per_Month"
 
-        if flavor == "flash" and flash_price is not None:
-            new_price = f"{flash_price:.2f}"
-            field_name = "Storage_Price_Per_GB_Per_Month"
-        elif "a100" in flavor and a100_price is not None:
+        if "a100" in flavor and a100_price is not None:
             new_price = f"{a100_price:.2f}"
             field_name = "Compute_Price_Per_Month"
         elif "v100" in flavor and v100_price is not None:
@@ -147,10 +159,16 @@ def update_openstack_pricing(
             and flavor != "floating_ip"
             and core_price is not None
         ):
-            new_price = f"{core_price:.2f}"
+            # For CPU flavors, multiply core_price by number of cores
+            try:
+                cores = int(row["Cores"].strip())
+                new_price = f"{core_price * cores:.2f}"
+            except (ValueError, KeyError):
+                # If cores cannot be parsed, skip this row
+                new_price = None
             field_name = "Compute_Price_Per_Month"
 
-        # Apply the price update if determined
+        # Apply the compute price update if determined
         if new_price is not None:
             old_value = row.get(field_name, "")
             if old_value != new_price:

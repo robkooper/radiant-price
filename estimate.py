@@ -1233,8 +1233,8 @@ def main():
     )
     parser.add_argument(
         "--comparison",
-        default="cheapest",
-        help='Cloud provider to compare costs against (e.g., aws, gce, azure, linode; default: cheapest, use "none" to hide comparison columns)',
+        default="none",
+        help='Cloud provider to compare costs against (e.g., aws, gce, azure, linode; default: none, use "cheapest" to compare against lowest-cost provider)',
     )
     parser.add_argument(
         "--cache",

@@ -24,26 +24,22 @@ python3 estimate.py --cloud software --format csv --output report.csv
 ## Example Output
 
 ```bash
-$ python3 estimate.py "software-dev-.*" --cloud software --comparison cheapest
+$ python3 estimate.py "software-.*" --cloud software --comparison cheapest
 ```
 
-```
-╒══════════════════════════════╤══════════╤═════════╤════════════╤═══════════════╤═══════╤══════════════════╤══════════════════╕
-│ VM Name                      │ Status   │   Cores │   RAM (GB) │   Storage (GB)│ GPU   │ OpenStack ($/mo) │ Linode ($/mo)    │
-╞══════════════════════════════╪══════════╪═════════╪════════════╪═══════════════╪═══════╪══════════════════╪══════════════════╡
-│ software-dev-worker-01       │ ACTIVE   │       4 │         16 │           100 │ -     │            35.60 │            48.00 │
-│ software-dev-worker-02       │ ACTIVE   │       4 │         16 │           100 │ -     │            35.60 │            48.00 │
-│ software-dev-worker-03       │ ACTIVE   │       4 │         16 │           100 │ -     │            35.60 │            48.00 │
-│ software-dev-controlplane-01 │ ACTIVE   │       2 │          8 │            50 │ -     │            23.54 │            24.00 │
-│ software-dev-controlplane-02 │ ACTIVE   │       2 │          8 │            50 │ -     │            23.54 │            24.00 │
-│ software-dev-controlplane-03 │ ACTIVE   │       2 │          8 │            50 │ -     │            23.54 │            24.00 │
-├──────────────────────────────┼──────────┼─────────┼────────────┼───────────────┼───────┼──────────────────┼──────────────────┤
-│ TOTAL                        │          │      18 │         72 │           450 │       │           201.42 │           240.00 │
-╘══════════════════════════════╧══════════╧═════════╧════════════╧═══════════════╧═══════╧══════════════════╧══════════════════╛
-
-Comparison provider: linode (cheapest alternative to OpenStack)
-Monthly savings on OpenStack: $38.58 (16.1% cheaper)
-```
+| VM Name | Flavor | Cores | RAM (GB) | Storage (GB) | OS Cost | HETZNER Flavor | HETZNER Cost | Savings |
+|---|---|---|---|---|---|---|---|---|
+| software-controlplane-01 | gp.medium | 2 | 8 | 40 | $   15.66 | ccx13 | $   17.09 | $    1.43 |
+| software-controlplane-02 | gp.medium | 2 | 8 | 40 | $   15.66 | ccx13 | $   17.09 | $    1.43 |
+| software-controlplane-03 | gp.medium | 2 | 8 | 40 | $   15.66 | ccx13 | $   17.09 | $    1.43 |
+| software-worker-01 | gp.large | 4 | 16 | 80 + 228 | $   63.24 | ccx23 | $   44.99 | $  -18.25 |
+| software-worker-02 | gp.large | 4 | 16 | 80 + 270 | $   69.12 | ccx23 | $   47.09 | $  -22.03 |
+| software-worker-03 | gp.large | 4 | 16 | 80 + 228 | $   63.24 | ccx23 | $   44.99 | $  -18.25 |
+| software-worker-04 | gp.large | 4 | 16 | 80 + 101 | $   45.46 | ccx23 | $   38.64 | $   -6.82 |
+| software-worker-05 | gp.large | 4 | 16 | 80 + 8 | $   32.44 | ccx23 | $   33.99 | $    1.55 |
+| software-worker-06 | gp.xlarge | 8 | 32 | 80 + 486 | $  119.48 | ccx33 | $   84.39 | $  -35.09 |
+| software-worker-07 | gp.xlarge | 8 | 32 | 80 + 370 | $  103.24 | ccx33 | $   78.59 | $  -24.65 |
+| **TOTAL** |  | 42 | 168 | 680 + 1691 | $  543.20 |  | $  423.95 | $ -119.25 |
 
 ## Features
 

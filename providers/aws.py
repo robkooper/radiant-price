@@ -1,7 +1,7 @@
 """AWS EC2 pricing fetcher (x86_64 Linux only)."""
 
 import json
-from typing import Dict
+from typing import Dict, Optional
 
 import requests
 
@@ -139,3 +139,53 @@ def fetch_aws_pricing(region: str = "us-east-1") -> Dict[str, Dict]:
     except Exception as e:
         print(f"      ✗ Error: {e}")
         return {}
+
+
+def get_aws_storage_price(region: str = "us-east-1") -> float:
+    """
+    Fetch AWS EBS storage pricing from ec2instances.info.
+
+    Dynamically extracts the per-GB monthly cost for EBS gp3 volumes
+    (general purpose SSD).
+
+    Args:
+        region: AWS region (default: us-east-1)
+
+    Returns:
+        Storage price per GB per month (e.g., 0.10), or 0.10 as fallback
+    """
+    try:
+        import re
+
+        url = "https://aws.amazon.com/ebs/pricing/"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.content, "html.parser")
+        page_text = soup.get_text()
+
+        # Look for gp3 pricing like "$0.10 per GB-month"
+        gp3_pattern = r"gp3.*?\$(\d+\.\d+).*?(?:per|\/)\s*(?:gb|GB)"
+        matches = re.findall(gp3_pattern, page_text, re.IGNORECASE | re.DOTALL)
+
+        if matches:
+            price = float(matches[0])
+            if 0.01 <= price <= 1.0:  # Sanity check
+                return price
+
+        # Alternative pattern - look for general purpose EBS pricing
+        gp_pattern = r"\$(\d+\.\d+)\s*(?:per|\/)\s*(?:gb-month|gb month|gb\/month)"
+        alt_matches = re.findall(gp_pattern, page_text, re.IGNORECASE)
+        if alt_matches:
+            price = float(alt_matches[0])
+            if 0.01 <= price <= 1.0:
+                return price
+
+    except Exception:
+        pass
+
+    # Fallback to known US pricing for gp3 volumes
+    return 0.10

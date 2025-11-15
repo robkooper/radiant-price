@@ -73,7 +73,7 @@ def load_openstack_flavors(csv_file: str) -> Dict[str, Dict]:
                     continue
 
                 flavor = row["Flavor"].strip()
-                if not flavor or flavor == "flash":
+                if not flavor:
                     continue
 
                 try:
@@ -192,9 +192,6 @@ def find_matches(
         candidates = []
 
         for instance_type, specs in provider_pricing.items():
-            if instance_type == "flash":
-                continue
-
             cores = specs.get("cores", 0)
             memory = specs.get("memory_gb", 0)
             price = specs.get("price", float("inf"))
@@ -322,17 +319,13 @@ def update_csv_with_matches(
     # Get existing matches to detect changes
     existing = get_existing_matches(csv_file, provider)
 
-    # Keep non-provider rows and provider's flash storage
+    # Keep non-provider rows
     rows_to_keep = []
     for row in rows:
         cloud = row["Cloud"].strip().lower()
-        flavor = row["Flavor"].strip()
 
         if cloud != provider.lower():
             # Keep other providers and OpenStack
-            rows_to_keep.append(row)
-        elif flavor == "flash":
-            # Keep flash storage row
             rows_to_keep.append(row)
 
     # Add matched instances and detect changes

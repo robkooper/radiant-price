@@ -456,3 +456,22 @@ def fetch_gcp_pricing() -> Dict[str, Dict]:
     except Exception as e:
         print(f"      ✗ Error: {e}")
         return {}
+
+
+def get_gcp_storage_price() -> float:
+    """
+    Get GCP Persistent Disk storage pricing.
+
+    Currently hardcoded as GCP pricing is complex and region-dependent.
+    Uses pd-standard pricing for us-central1 region.
+
+    Returns:
+        Storage price per GB per month (e.g., 0.04)
+    """
+    # GCP Persistent Disk pricing (as of 2024):
+    # pd-standard: $0.04/GB/month in us-central1
+    # pd-balanced: $0.10/GB/month in us-central1
+    # pd-ssd: $0.17/GB/month in us-central1
+
+    # Using pd-standard as the baseline (most cost-effective)
+    return 0.04

@@ -144,3 +144,42 @@ def fetch_digitalocean_pricing() -> Dict[str, Dict]:
     except Exception as e:
         print(f"      ✗ Error: {e}")
         return {}
+
+
+def get_digitalocean_storage_price() -> float:
+    """
+    Fetch DigitalOcean Block Storage pricing.
+
+    Dynamically extracts the per-GB monthly cost for Block Storage volumes
+    from the pricing calculator page.
+
+    Returns:
+        Storage price per GB per month (e.g., 0.10), or 0.10 as fallback
+    """
+    try:
+        pricing_page_url = "https://www.digitalocean.com/pricing/calculator"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        response = requests.get(pricing_page_url, headers=headers, timeout=15)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.content, "html.parser")
+        page_text = soup.get_text()
+
+        # Look for block storage pricing like "$0.10 per GB per month"
+        import re
+
+        storage_pattern = r"block\s+storage.*?\$(\d+\.\d+)\s*(?:per|\/)\s*(?:GB|gb)"
+        matches = re.findall(storage_pattern, page_text, re.IGNORECASE)
+
+        if matches:
+            price = float(matches[0])
+            if 0.01 <= price <= 1.0:  # Sanity check
+                return price
+
+    except Exception:
+        pass
+
+    # Fallback to known pricing
+    return 0.10

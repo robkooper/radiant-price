@@ -145,3 +145,47 @@ def _fetch_vultr_api() -> Dict[str, Dict]:
     except Exception as e:
         print(f"      ✗ API fallback failed: {e}")
         return {}
+
+
+def get_vultr_storage_price() -> float:
+    """
+    Fetch Vultr Block Storage pricing.
+
+    Dynamically extracts the per-GB monthly cost for Block Storage volumes
+    from the pricing page.
+
+    Returns:
+        Storage price per GB per month (e.g., 0.05), or 0.05 as fallback
+    """
+    try:
+        import re
+
+        import requests
+        from bs4 import BeautifulSoup
+
+        url = "https://www.vultr.com/pricing/"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.content, "html.parser")
+        page_text = soup.get_text()
+
+        # Look for block storage pricing like "$0.05 per GB"
+        storage_pattern = (
+            r"block\s+storage.*?\$(\d+\.\d+)(?:\s*per\s*|\s*\/\s*)(?:GB|gb)"
+        )
+        matches = re.findall(storage_pattern, page_text, re.IGNORECASE | re.DOTALL)
+
+        if matches:
+            price = float(matches[0])
+            if 0.01 <= price <= 1.0:  # Sanity check
+                return price
+
+    except Exception:
+        pass
+
+    # Fallback to known pricing
+    return 0.05

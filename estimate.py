@@ -11,17 +11,28 @@ import csv
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+import openstack
 from tabulate import tabulate
 
+# =============================================================================
+# Global Singletons (Lazy-Initialized)
+# =============================================================================
+# These are initialized on first use, not at module load time
+_openstack_connection: Optional[openstack.connection.Connection] = None
+_openstack_cloud: Optional[str] = None
+_flavor_cache: Optional[Dict[str, Dict]] = None
+_flavor_cache_cloud: Optional[str] = None
 
-# Pricing configuration - loads from pricing.csv
+
+# =============================================================================
+# Pricing Configuration
+# =============================================================================
 def load_all_pricing_data():
     """
     Load all pricing configuration from unified pricing.csv file.
@@ -253,17 +264,79 @@ def save_cache(cache_file: str, servers: List[Dict], cloud: str) -> None:
         print(f"Warning: Could not save cache: {e}", file=sys.stderr)
 
 
-def run_openstack_command(cmd: str, cloud: str) -> str:
-    """Run an OpenStack command with the specified cloud"""
-    full_cmd = f"openstack --os-cloud={cloud} {cmd}"
+def get_openstack_connection(cloud: str) -> openstack.connection.Connection:
+    """
+    Get or create an OpenStack connection (singleton pattern).
+
+    Connection is created only once on first call, then reused for all subsequent calls.
+    This avoids expensive initialization overhead on every call.
+
+    Args:
+        cloud: Cloud name (maps to os-cloud in clouds.yaml)
+
+    Returns:
+        OpenStack SDK connection object
+
+    Raises:
+        SystemExit on connection failure
+    """
+    global _openstack_connection, _openstack_cloud
+
+    # Return cached connection if already initialized for this cloud
+    if _openstack_connection is not None and _openstack_cloud == cloud:
+        return _openstack_connection
+
+    # Create new connection
     try:
-        result = subprocess.run(
-            full_cmd, shell=True, capture_output=True, text=True, check=True
-        )
-        return result.stdout
-    except subprocess.CalledProcessError as e:
-        print(f"Error running OpenStack command: {e.stderr}", file=sys.stderr)
+        _openstack_connection = openstack.connect(cloud=cloud)
+        _openstack_cloud = cloud
+        return _openstack_connection
+    except openstack.exceptions.SDKException as e:
+        print(f"Error connecting to OpenStack cloud '{cloud}': {e}", file=sys.stderr)
+        print(f"Check that clouds.yaml has '{cloud}' configured", file=sys.stderr)
         sys.exit(1)
+    except Exception as e:
+        print(f"Unexpected error connecting to OpenStack: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def get_flavor(cloud: str, flavor_name: str) -> Optional[Dict]:
+    """
+    Get flavor information by name (singleton-cached).
+
+    Loads all flavors from OpenStack on first call, then caches them.
+    Subsequent calls return cached values.
+
+    Args:
+        cloud: OpenStack cloud name
+        flavor_name: Name of the flavor to look up
+
+    Returns:
+        Dict with {vcpus, ram, disk} or None if flavor not found
+    """
+    global _flavor_cache, _flavor_cache_cloud
+
+    # Load flavor cache if needed (lazy initialization on first call)
+    if _flavor_cache is None or _flavor_cache_cloud != cloud:
+        print("Loading flavor cache from OpenStack", file=sys.stderr)
+        conn = get_openstack_connection(cloud)
+
+        _flavor_cache = {}
+        try:
+            for flavor in conn.compute.flavors():
+                _flavor_cache[flavor.name] = {
+                    "vcpus": flavor.vcpus,
+                    "ram": flavor.ram,
+                    "disk": flavor.disk,
+                }
+        except Exception as e:
+            print(f"Warning: Could not load flavor cache: {e}", file=sys.stderr)
+            _flavor_cache = {}
+
+        _flavor_cache_cloud = cloud
+
+    # Return the flavor or None if not found
+    return _flavor_cache.get(flavor_name)
 
 
 def detect_gpu(vm_name: str) -> Tuple[Optional[str], int]:
@@ -331,8 +404,10 @@ def list_vms(
     Loads from cache if valid, otherwise fetches from OpenStack.
     Saves updated cache after processing.
 
+    Uses the singleton OpenStack connection (lazily initialized on first call).
+
     Args:
-        cloud: OpenStack cloud name
+        cloud: OpenStack cloud name (for cache file naming and display)
         vm_filter: Optional list of regex patterns to filter VMs
         cache_dir: Directory to store cache files (default: .vm_cache)
         cache_max_age_hours: Max cache age in hours (-1=never expire, 0=always refresh)
@@ -340,6 +415,8 @@ def list_vms(
     Returns:
         List of VM objects (filtered)
     """
+    # Get the singleton OpenStack connection
+    conn = get_openstack_connection(cloud)
     # Get cache file path
     cache_file = get_cache_path(cache_dir, cloud)
 
@@ -348,20 +425,29 @@ def list_vms(
     if servers is not None:
         print(f"Using cached VMs from {cloud}", file=sys.stderr)
     else:
-        # Cache miss - fetch from OpenStack
+        # Cache miss - fetch from OpenStack using SDK
         try:
-            output = run_openstack_command("server list -f json", cloud)
-            servers = json.loads(output)
-        except json.JSONDecodeError:
-            print("Error: Could not parse OpenStack server list", file=sys.stderr)
+            servers_from_api = list(conn.compute.servers(details=True))
+            # Convert SDK objects to dicts for cache compatibility
+            servers = [
+                {
+                    "ID": s.id,
+                    "Name": s.name,
+                    "Status": s.status,
+                    "flavor": s.flavor,
+                }
+                for s in servers_from_api
+            ]
+        except Exception as e:
+            print(
+                f"Error: Could not fetch server list from OpenStack: {e}",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
     vms = []
     # Compile patterns from list of regex strings
     patterns = [re.compile(p) for p in vm_filter] if vm_filter else []
-
-    # Lazy-load flavor cache (None initially, fetch on first use)
-    flavor_cache = None
 
     for server in servers:
         name = server.get("Name", "")
@@ -384,17 +470,20 @@ def list_vms(
             # Show progress
             print(f"\rProcessing VM: {name}\033[K", end="", file=sys.stderr, flush=True)
 
-            # Get detailed server info
+            # Get detailed server info using SDK
             try:
-                detail_output = run_openstack_command(
-                    f"server show {name} -f json", cloud
+                server_obj = conn.compute.get_server(server.get("ID"))
+                if server_obj is None:
+                    continue
+            except Exception as e:
+                print(
+                    f"Warning: Could not fetch details for {name}: {e}",
+                    file=sys.stderr,
                 )
-                details = json.loads(detail_output)
-            except (json.JSONDecodeError, subprocess.CalledProcessError):
                 continue
         else:
             # Use cached data - no need to query OpenStack
-            details = {}
+            server_obj = None
 
         # Extract information
         status = server.get("Status", "UNKNOWN")
@@ -406,102 +495,93 @@ def list_vms(
             cores = server.get("cores", 0)
             ram_mb = server.get("ram_mb", 0)
         else:
-            # Extract flavor info from details (freshly fetched)
-            flavor_info = details.get("flavor", {})
+            # Extract flavor info from server object (freshly fetched)
             flavor_name = "unknown"
+            cores = 0
+            ram_mb = 0
 
-            if isinstance(flavor_info, str):
-                # If flavor is a string like "gp.medium (gp.medium)", extract the name
-                flavor_name = flavor_info.split("(")[0].strip()
-                if flavor_name in PROVIDER_PRICING.get("openstack", {}):
-                    flavor_specs = PROVIDER_PRICING["openstack"][flavor_name]
-                    cores = flavor_specs["cores"]
-                    ram_mb = int(flavor_specs["memory_gb"] * 1024)
-                else:
-                    # Flavor not in pricing.csv, try to get from flavor cache
-                    # Lazy-load flavor cache if needed
-                    if flavor_cache is None:
-                        try:
-                            flavor_list_output = run_openstack_command(
-                                "flavor list -f json", cloud
-                            )
-                            flavor_list = json.loads(flavor_list_output)
-                            flavor_cache = {f.get("Name", ""): f for f in flavor_list}
-                        except (json.JSONDecodeError, subprocess.CalledProcessError):
-                            flavor_cache = {}
+            if server_obj and hasattr(server_obj, "flavor"):
+                flavor_info = server_obj.flavor
 
-                    # Look up in flavor cache
-                    if flavor_name in flavor_cache:
-                        flavor_data = flavor_cache[flavor_name]
-                        cores = flavor_data.get("VCPUs", 0)
-                        ram_mb = flavor_data.get("RAM", 0)
+                # flavor_info is a dict with flavor details
+                if isinstance(flavor_info, dict):
+                    flavor_name = flavor_info.get("original_name") or flavor_info.get(
+                        "name", "unknown"
+                    )
+                    # Look up in pricing data first
+                    if flavor_name in PROVIDER_PRICING.get("openstack", {}):
+                        flavor_specs = PROVIDER_PRICING["openstack"][flavor_name]
+                        cores = flavor_specs["cores"]
+                        ram_mb = int(flavor_specs["memory_gb"] * 1024)
                     else:
-                        cores = 0
-                        ram_mb = 0
-            else:
-                # If flavor is a dict with details
-                flavor_name = flavor_info.get(
-                    "original_name", flavor_info.get("name", "unknown")
-                )
-                cores = flavor_info.get("vcpus", 0) or 0
-                ram_mb = flavor_info.get("ram", 0) or 0
+                        # Fall back to OpenStack flavor info
+                        flavor_info = get_flavor(cloud, flavor_name)
+                        if flavor_info:
+                            cores = flavor_info.get("vcpus", 0)
+                            ram_mb = flavor_info.get("ram", 0)
+                else:
+                    # If flavor is a string, try to parse it
+                    flavor_name = str(flavor_info).split("(")[0].strip()
+                    if flavor_name in PROVIDER_PRICING.get("openstack", {}):
+                        flavor_specs = PROVIDER_PRICING["openstack"][flavor_name]
+                        cores = flavor_specs["cores"]
+                        ram_mb = int(flavor_specs["memory_gb"] * 1024)
+                    else:
+                        # Fall back to OpenStack flavor info
+                        flavor_info_data = get_flavor(cloud, flavor_name)
+                        if flavor_info_data:
+                            cores = flavor_info_data.get("vcpus", 0)
+                            ram_mb = flavor_info_data.get("ram", 0)
 
         # Get storage info - only fetch if not already cached
         boot_storage_gb = server.get("boot_storage_gb")
         additional_storage_gb = server.get("additional_storage_gb")
 
         if boot_storage_gb is None or additional_storage_gb is None:
-            # Need to fetch storage from OpenStack
+            # Need to fetch storage from OpenStack using SDK
             boot_storage_gb = 0
             additional_storage_gb = 0
-            boot_storage_from_volume = False
 
-            # Get flavor disk size from cached flavors or OpenStack
-            # Lazy-load flavor cache on first use
-            if flavor_cache is None:
-                try:
-                    flavor_list_output = run_openstack_command(
-                        "flavor list -f json", cloud
-                    )
-                    flavor_list = json.loads(flavor_list_output)
-                    flavor_cache = {f.get("Name", ""): f for f in flavor_list}
-                except (json.JSONDecodeError, subprocess.CalledProcessError):
-                    flavor_cache = {}
+            # Get flavor disk size from OpenStack flavor info
+            flavor_info = get_flavor(cloud, flavor_name)
+            if flavor_info:
+                boot_storage_gb = flavor_info.get("disk", 0)
 
-            # Look up flavor in cache
-            if flavor_name in flavor_cache:
-                boot_storage_gb = flavor_cache[flavor_name].get("Disk", 0)
-            else:
-                boot_storage_gb = 0
-
-            # Get volumes attached to this server
+            # Get volumes attached to this server using SDK
             try:
-                vol_attach_output = run_openstack_command(
-                    f"server volume list {name} -f json", cloud
+                server_id = server.get("ID")
+                if server_id:
+                    # List volumes attached to this server
+                    volume_attachments = list(
+                        conn.compute.volume_attachments(server_id)
+                    )
+
+                    for attachment in volume_attachments:
+                        device = attachment.get("device") or ""
+                        vol_id = attachment.get("volume_id")
+
+                        if vol_id:
+                            try:
+                                # Get the volume details to get its size
+                                volume = conn.block_storage.get_volume(vol_id)
+                                vol_size = volume.size if volume else 0
+
+                                # Check if this is the boot disk (/dev/vda)
+                                if device == "/dev/vda":
+                                    boot_storage_gb = vol_size
+                                else:
+                                    # Count non-boot volumes as additional storage
+                                    additional_storage_gb += vol_size
+                            except Exception as e:
+                                print(
+                                    f"Warning: Could not fetch volume {vol_id}: {e}",
+                                    file=sys.stderr,
+                                )
+            except Exception as e:
+                print(
+                    f"Warning: Could not fetch volumes for {name}: {e}",
+                    file=sys.stderr,
                 )
-                vol_attachments = json.loads(vol_attach_output)
-
-                for attachment in vol_attachments:
-                    device = attachment.get("Device", "")
-                    vol_id = attachment.get("Volume ID")
-
-                    if vol_id:
-                        # Get the volume details to get its size
-                        vol_detail_output = run_openstack_command(
-                            f"volume show {vol_id} -f json", cloud
-                        )
-                        vol_detail = json.loads(vol_detail_output)
-                        vol_size = vol_detail.get("size", 0)
-
-                        # Check if this is the boot disk (/dev/vda)
-                        if device == "/dev/vda":
-                            boot_storage_gb = vol_size
-                            boot_storage_from_volume = True
-                        else:
-                            # Count non-boot volumes as additional storage
-                            additional_storage_gb += vol_size
-            except (json.JSONDecodeError, subprocess.CalledProcessError):
-                pass
 
         # Detect GPU - check flavor specs first, then VM name
         gpu_type, gpu_count = None, 0
@@ -1250,13 +1330,12 @@ def main():
 
     args = parser.parse_args()
 
-    print(f"Connecting to OpenStack cloud: {args.cloud}", file=sys.stderr)
-
     # Load provider pricing from pricing.csv
     print("Loading prices from pricing.csv", file=sys.stderr)
     provider_pricing = load_all_pricing_data()
 
     # List VMs (with caching)
+    # Note: OpenStack connection will be created lazily on first call to list_vms()
     if args.vms:
         if len(args.vms) == 1:
             print(f"Listing VMs matching: {args.vms[0]}", file=sys.stderr)

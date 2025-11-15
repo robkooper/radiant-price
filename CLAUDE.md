@@ -296,6 +296,32 @@ gpu_tiers = {
 
 ## Key Conventions and Standards
 
+### Global Singleton Pattern
+
+**Location:** All global singletons are declared at the top of estimate.py (right after imports), in a clearly marked section:
+
+```python
+# =============================================================================
+# Global Singletons (Lazy-Initialized)
+# =============================================================================
+_openstack_connection: Optional[openstack.connection.Connection] = None
+_openstack_cloud: Optional[str] = None
+_flavor_cache: Optional[Dict[str, Dict]] = None
+_flavor_cache_cloud: Optional[str] = None
+```
+
+**Pattern:**
+- Initialized to `None` at module load time
+- Created on first use (lazy initialization)
+- Cached for reuse in subsequent calls
+- Always kept at the top of the file for visibility
+
+**Why this approach:**
+- Avoids expensive initialization if not needed
+- Single instance reused throughout execution
+- Clear documentation of what's being cached
+- Top placement makes it easy to review all global state
+
 ### Code Style
 
 - **Python Version:** Python 3.7+
@@ -303,6 +329,7 @@ gpu_tiers = {
 - **Type Hints:** Use dataclasses and type annotations where appropriate
 - **Error Handling:** Print errors to stderr, exit with status codes
 - **Docstrings:** Use triple-quoted strings with Args/Returns sections
+- **Globals:** Keep all global singletons at top of file, clearly marked
 
 ### Naming Conventions
 
@@ -315,23 +342,37 @@ gpu_tiers = {
 ### OpenStack Integration
 
 **Dependencies:**
-- Requires OpenStack CLI (`openstack` command)
+- Requires `openstacksdk` Python library (not CLI)
 - Requires `~/.config/openstack/clouds.yaml` configuration
-- Uses shell commands, not direct API calls
+- Uses Python SDK for direct API calls (faster, more reliable)
 
 **Cloud Names:**
 - Examples: "aifarms", "cori", "clowder", "software"
 - Passed via `--cloud` argument
-- Must match clouds.yaml configuration
+- Must match `os-cloud` alias in clouds.yaml configuration
+- The `cloud` variable is used directly as the connection cloud name
 
-**OpenStack Commands Used:**
-```bash
-openstack --os-cloud=CLOUD server list -f json
-openstack --os-cloud=CLOUD server show VM_NAME -f json
-openstack --os-cloud=CLOUD flavor show FLAVOR_NAME -f json
-openstack --os-cloud=CLOUD server volume list VM_NAME -f json
-openstack --os-cloud=CLOUD volume show VOLUME_ID -f json
+**OpenStack SDK API Calls Used:**
+```python
+# Connection creation
+conn = openstack.connect(cloud=cloud_name)
+
+# Server operations
+servers = conn.compute.servers(details=True)
+server = conn.compute.get_server(server_id)
+
+# Flavor operations
+flavors = conn.compute.flavors()
+
+# Volume operations (attachments are in compute, volumes in block_storage)
+attachments = conn.compute.volume_attachments(server_id)
+volume = conn.block_storage.get_volume(volume_id)
 ```
+
+**Error Handling:**
+- Catches `openstack.exceptions.SDKException` for OpenStack-specific errors
+- Graceful degradation with warnings for individual VM/volume failures
+- Early exit only on critical connection failures
 
 ### Pricing Conventions
 
@@ -611,13 +652,59 @@ beautifulsoup4>=4.11.0     # HTML parsing (for web scraping)
 - `~/.config/openstack/clouds.yaml` must be configured
 - Git for version control
 
+## Documentation Updates
+
+**CRITICAL:** When making code changes, always update relevant documentation:
+
+1. **CLAUDE.md** (this file) - Developer/AI guide
+   - Update OpenStack Integration section if API calls change
+   - Add entry to "Recent Major Simplifications" for significant refactors
+   - Update line number references if functions move
+   - Update version history at the end
+
+2. **README.md** - User guide
+   - Update examples if CLI arguments change
+   - Update feature list if adding new functionality
+   - Update usage instructions if workflow changes
+
+3. **CONTRIBUTING.md** - Contributor guide
+   - Update if adding new cloud providers
+   - Update code patterns/examples if architecture changes
+   - Update testing instructions if new test procedures needed
+
+4. **requirements.txt** - Dependencies
+   - Update whenever adding/removing Python packages
+   - Keep versions synchronized with tested versions
+
+5. **PROVIDERS.md** (if it exists) - Provider reference
+   - Update when provider behavior changes
+   - Document new provider integrations
+   - Document API endpoints and fallback behavior
+
+**Why this matters:**
+- Out-of-date docs make the codebase harder to maintain
+- Future developers (AI or human) rely on docs to understand intent
+- Incomplete documentation leads to bugs and duplicated effort
+- This is especially critical for API changes that affect integration points
+
+**Checklist before committing:**
+- [ ] Code changes complete and tested
+- [ ] CLAUDE.md updated (if architecture/API changes)
+- [ ] README.md updated (if user-facing changes)
+- [ ] CONTRIBUTING.md updated (if contribution process changes)
+- [ ] requirements.txt updated (if dependencies changed)
+- [ ] Version history updated in CLAUDE.md
+- [ ] All docs are accurate and reflect current state
+
+---
+
 ## Git Workflow
 
 ### Branch Strategy
 
-**Current Branch:** `claude/claude-md-mhye6vfhxhycwk9i-01RqeH9ZJBeXrBQiL5ko3bi4`
+**Current Branch:** `main`
 
-**Main Branch:** (to be determined - likely `main` or `master`)
+**Development:** Create feature branches off main
 
 ### Commit Guidelines
 
@@ -713,6 +800,46 @@ python3 estimate.py --cloud software --format json
 ## Recent Major Simplifications (November 2025)
 
 This section documents the major code simplifications made to the codebase, making it cleaner and more maintainable.
+
+### November 15, 2025 - OpenStack SDK Migration
+
+**Migrated from CLI to Python OpenStack SDK:**
+- Replaced `subprocess` calls to `openstack` CLI with direct SDK calls via `openstacksdk`
+- Removed `python-openstackclient` dependency (no longer needed)
+- All OpenStack operations now use Python API instead of shell commands
+- Added `get_openstack_connection(cloud)` helper with **singleton pattern** to manage SDK connection lifecycle
+  - Connection created only once on first call, then reused for all subsequent calls
+  - Avoids expensive initialization overhead on repeated calls
+  - Global variables `_openstack_connection` and `_openstack_cloud` cache the connection
+- Added `build_flavor_cache(conn)` to efficiently load all flavors at startup
+- Updated `list_vms()` to accept connection object instead of cloud string
+- Connection created once in `main()`, passed to all functions needing OpenStack access
+- **Fixed:** Volume attachments use `conn.compute.volume_attachments()` not `conn.block_storage.volume_attachments()`
+
+**Benefits:**
+- ✅ **Faster execution** - No subprocess overhead, direct API calls
+- ✅ **Better error handling** - SDK exceptions instead of parsing stderr
+- ✅ **More reliable** - No shell escaping issues or CLI version incompatibilities
+- ✅ **Type safety** - IDE autocomplete on SDK objects
+- ✅ **Simpler dependency chain** - One fewer external CLI tool required
+
+**Key API Changes:**
+- `list_vms(cloud, ...)` - Simplified signature, no longer requires passing connection object
+- `get_flavor(cloud, flavor_name)` - Singleton function for flavor lookups (lazy-loaded, cached)
+- Removed `run_openstack_command()` function entirely
+- OpenStack connection is lazily initialized via singleton pattern (only created when first needed)
+- Flavor cache is lazily initialized via singleton pattern (only loaded when first needed)
+- All functions that need the connection call `get_openstack_connection(cloud)` internally
+- All functions that need flavor info call `get_flavor(cloud, flavor_name)` internally
+- SDK handles authentication via `clouds.yaml` (same as before)
+- main() no longer creates or manages the connection lifecycle - fully decoupled
+
+**Backward Compatibility:**
+- Cache format unchanged (still JSON)
+- CLI arguments unchanged
+- All output formats unchanged
+- Pricing logic unchanged
+- User-facing behavior identical
 
 ### November 15, 2025 - Code Cleanup and Consolidation
 
@@ -898,6 +1025,7 @@ When making significant changes, update this section:
 **Status:** Production Ready
 
 **Version History:**
+- **v2.3 (2025-11-15)**: Migrated from OpenStack CLI to openstacksdk - replaced subprocess calls with direct Python SDK calls, removed python-openstackclient dependency, added get_openstack_connection() and build_flavor_cache() helpers, updated list_vms() to accept connection object
 - **v2.2 (2025-11-15)**: Code cleanup - removed unused functions, added VM helper methods (get_billable_storage, get_provider_flavor), added utility functions (format_price, calculate_totals), consolidated duplicate code across all report functions, updated line number references
 - **v2.1 (2025-11-15)**: Streamlined documentation structure - removed redundant files (QUICKSTART.md, CONFIG.md, FEATURES.md, INDEX.md), consolidated into README.md, CLAUDE.md, and CONTRIBUTING.md
 - **v2.0 (2025-11-14)**: Updated architecture documentation to reflect simplified codebase, added "Recent Major Simplifications" section, removed references to deprecated functions, updated CLI examples to show multiple VM pattern support, documented table-first approach and on-demand calculation principles

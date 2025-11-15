@@ -85,65 +85,11 @@ def get_vultr_flavor_prices() -> Dict[str, Dict]:
             print(f"      ✓ Fetched {len(pricing_data)} Vultr instances")
             return pricing_data
         else:
-            print(f"      ⚠ No pricing data found, trying API fallback...")
-            return _fetch_vultr_api()
+            print(f"      ✗ No pricing data found")
+            return {}
 
     except Exception as e:
-        print(f"      ✗ Error: {e}, trying API fallback...")
-        return _fetch_vultr_api()
-
-
-def _fetch_vultr_api() -> Dict[str, Dict]:
-    """Fallback: Fetch from Vultr API if web scraping fails."""
-    try:
-        # Try the updated API endpoint
-        url = "https://api.vultr.com/v2/products/compute"
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-
-        data = response.json()
-        pricing_data = {}
-
-        for compute in data.get("products", []):
-            compute_id = compute.get("id")
-            monthly_cost = compute.get("monthly_cost", 0)
-            vcpu_count = compute.get("cpu_count", 0)
-            ram_mb = compute.get("ram", 0)
-            label = compute.get("label", "")
-
-            # Extract GPU information from label
-            gpu_count = 0
-            gpu_model = ""
-            gpu_memory = 0
-            label_lower = label.lower()
-
-            if "gpu" in label_lower:
-                # Try to extract GPU info from label
-                if "a100" in label_lower:
-                    gpu_model = "NVIDIA A100"
-                    gpu_count = 1
-                    gpu_memory = 80
-                elif "rtx" in label_lower:
-                    gpu_model = "NVIDIA RTX"
-                    gpu_count = 1
-                    gpu_memory = 24
-
-            if compute_id and monthly_cost > 0 and vcpu_count:
-                pricing_data[compute_id] = {
-                    "cores": vcpu_count,
-                    "memory_gb": ram_mb / 1024 if ram_mb else 0,
-                    "price": round(float(monthly_cost), 2),
-                    "gpu_count": gpu_count,
-                    "gpu_model": gpu_model,
-                    "gpu_memory": gpu_memory,
-                }
-
-        if pricing_data:
-            print(f"      ✓ Fetched {len(pricing_data)} Vultr instances from API")
-        return pricing_data
-
-    except Exception as e:
-        print(f"      ✗ API fallback failed: {e}")
+        print(f"      ✗ Error: {e}")
         return {}
 
 

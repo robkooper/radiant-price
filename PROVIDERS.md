@@ -133,9 +133,7 @@ Both functions return dicts that can be extended in the future with additional s
 **File:** `providers/vultr.py`
 
 **Flavor Pricing (get_vultr_flavor_prices):**
-- **Source:** Dual approach
-  1. Primary: Dynamic - scrapes `https://www.vultr.com/pricing/`
-  2. Fallback: API from `https://api.vultr.com/v2/products/compute`
+- **Source:** Dynamic - scrapes `https://www.vultr.com/pricing/`
 - **Parsing:** Extracts vCPU, memory, hourly price (converts to monthly)
 - **De-duplication:** Avoids duplicate vCPU/memory configurations
 - **GPU Support:** Yes - detects A100, H100 from instance label/slug

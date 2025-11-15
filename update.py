@@ -147,10 +147,24 @@ def update_openstack_pricing(
         field_name = "Compute_Price_Per_Month"
 
         if "a100" in flavor and a100_price is not None:
-            new_price = f"{a100_price:.2f}"
+            # Handle A100 GPU flavors: x1, x2, x4
+            # Extract multiplier from flavor name (e.g., "gpu.a100.x2" → 2)
+            multiplier = 1
+            if ".x2" in flavor:
+                multiplier = 2
+            elif ".x4" in flavor:
+                multiplier = 4
+            new_price = f"{a100_price * multiplier:.2f}"
             field_name = "Compute_Price_Per_Month"
         elif "v100" in flavor and v100_price is not None:
-            new_price = f"{v100_price:.2f}"
+            # Handle V100 GPU flavors: x1, x2, x4
+            # Extract multiplier from flavor name (e.g., "gpu.v100.x2" → 2)
+            multiplier = 1
+            if ".x2" in flavor:
+                multiplier = 2
+            elif ".x4" in flavor:
+                multiplier = 4
+            new_price = f"{v100_price * multiplier:.2f}"
             field_name = "Compute_Price_Per_Month"
         elif (
             not flavor.startswith("gpu.")

@@ -1,13 +1,20 @@
 Cloud,Flavor,Matched_OpenStack_Flavor,Cores,Memory_GB,Boot_Storage_GB,GPU,Compute_Price_Per_Month,Storage_Price_Per_GB_Per_Month,Description,Notes
 openstack,gp.small,,1,4,0,none,5.03,0.14,gp.small OpenStack flavor,Boot from disk - no attached storage charged
 openstack,gp.medium,,2,8,0,none,10.06,0.14,gp.medium OpenStack flavor,Boot from disk - no attached storage charged
+openstack,m1.medium,,2,4,0,none,10.06,0.14,gp.medium OpenStack flavor,Boot from disk - no attached storage charged
 openstack,gp.large,,4,16,0,none,20.12,0.14,gp.large OpenStack flavor,Boot from disk - no attached storage charged
+openstack,m1.large,,4,8,0,none,20.12,0.14,gp.large OpenStack flavor,Boot from disk - no attached storage charged
 openstack,gp.xlarge,,8,32,0,none,40.24,0.14,gp.xlarge OpenStack flavor,Boot from disk - no attached storage charged
 openstack,gp.2xlarge,,16,64,0,none,80.48,0.14,gp.2xlarge OpenStack flavor,Boot from disk - no attached storage charged
 openstack,gp.4xlarge,,32,128,0,none,160.96,0.14,gp.4xlarge OpenStack flavor,Boot from disk - no attached storage charged
 openstack,gp.6xlarge,,48,192,0,none,241.44,0.14,gp.6xlarge OpenStack flavor,Boot from disk - no attached storage charged
 openstack,gpu.a100.x1,,24,230,0,a100,546.45,0.14,gpu.a100.x1 with 1x A100 GPU,Boot from disk - 1x A100 GPU
+openstack,gpu.a100.x2,,48,460,0,a100,1092.90,0.14,gpu.a100.x2 with 2x A100 GPU,Boot from disk - 2x A100 GPU
+openstack,gpu.a100.x4,,96,920,0,a100,2185.80,0.14,gpu.a100.x4 with 4x A100 GPU,Boot from disk - 4x A100 GPU
 openstack,g1.a100.80gb.x1,,24,230,0,a100,546.45,0.14,g1.a100.80gb.x1 with 1x A100 GPU,Boot from disk - 1x A100 GPU
+openstack,g1.a100.80gb.x2,,48,460,0,a100,1092.90,0.14,g1.a100.80gb.x2 with 2x A100 GPU,Boot from disk - 2x A100 GPU
+openstack,g1.a100.80gb.x4,,96,920,0,a100,2185.80,0.14,g1.a100.80gb.x4 with 4x A100 GPU,Boot from disk - 4x A100 GPU
+openstack,gpu.v100.1,,19,37,0,v100,291.34,0.14,gpu.v100.1 with 1x V100 GPU,Boot from disk - 1x V100 GPU
 aws,p4d.24xlarge,g1.a100.80gb.x1,96,1152.0,,none,2003.63,0.08,AWS p4d.24xlarge (matched to g1.a100.80gb.x1),"GPU instance, Xeon Platinum 8275L, 4x 100 Gigabit, 8x NVIDIA A100 (price divided by 8 for single GPU)"
 aws,m5a.4xlarge,gp.2xlarge,16,64.0,,none,502.24,0.08,AWS m5a.4xlarge (matched to gp.2xlarge),"General purpose, EPYC 7571, Up to 10 Gigabit"
 aws,m5a.8xlarge,gp.4xlarge,32,128.0,,none,1004.48,0.08,AWS m5a.8xlarge (matched to gp.4xlarge),"General purpose, EPYC 7571, Up to 10 Gigabit"
@@ -17,6 +24,9 @@ aws,t3a.large,gp.medium,2,8.0,,none,54.90,0.08,AWS t3a.large (matched to gp.medi
 aws,t3a.medium,gp.small,2,4.0,,none,27.45,0.08,AWS t3a.medium (matched to gp.small),"General purpose, EPYC 7571, Up to 5 Gigabit, Burstable (288min)"
 aws,t3a.2xlarge,gp.xlarge,8,32.0,,none,219.58,0.08,AWS t3a.2xlarge (matched to gp.xlarge),"General purpose, EPYC 7571, Up to 5 Gigabit"
 aws,p4d.24xlarge,gpu.a100.x1,96,1152.0,,none,2003.63,0.08,AWS p4d.24xlarge (matched to gpu.a100.x1),"GPU instance, Xeon Platinum 8275L, 4x 100 Gigabit, 8x NVIDIA A100 (price divided by 8 for single GPU)"
+aws,g5.12xlarge,gpu.v100.1,48,192.0,,none,1035.14,0.08,AWS g5.12xlarge (matched to gpu.v100.1),"GPU instance, EPYC 7R32, 40 Gigabit, 4x NVIDIA A10G (price divided by 4 for single GPU)"
+aws,t3a.xlarge,m1.large,4,16.0,,none,109.79,0.08,AWS t3a.xlarge (matched to m1.large),"General purpose, EPYC 7571, Up to 5 Gigabit"
+aws,t3a.medium,m1.medium,2,4.0,,none,27.45,0.08,AWS t3a.medium (matched to m1.medium),"General purpose, EPYC 7571, Up to 5 Gigabit, Burstable (288min)"
 azure,linux-nd96asr-standard,g1.a100.80gb.x1,96,900.0,,none,2481.73,0.05,AZURE linux-nd96asr-standard (matched to g1.a100.80gb.x1),8x NVIDIA A100 (price divided by 8 for single GPU)
 azure,linux-b16psv2-standard,gp.2xlarge,16,64.0,,none,392.74,0.05,AZURE linux-b16psv2-standard (matched to gp.2xlarge),
 azure,linux-d32psv6-standard,gp.4xlarge,32,128.0,,none,819.79,0.05,AZURE linux-d32psv6-standard (matched to gp.4xlarge),
@@ -26,6 +36,9 @@ azure,linux-b2psv2-standard,gp.medium,2,8.0,,none,49.06,0.05,AZURE linux-b2psv2-
 azure,linux-b2plsv2-standard,gp.small,2,4.0,,none,24.53,0.05,AZURE linux-b2plsv2-standard (matched to gp.small),
 azure,linux-b8psv2-standard,gp.xlarge,8,32.0,,none,196.37,0.05,AZURE linux-b8psv2-standard (matched to gp.xlarge),
 azure,linux-nd96asr-standard,gpu.a100.x1,96,900.0,,none,2481.73,0.05,AZURE linux-nd96asr-standard (matched to gpu.a100.x1),8x NVIDIA A100 (price divided by 8 for single GPU)
+azure,linux-nd40rsv2-standard,gpu.v100.1,40,672.0,,none,2010.42,0.05,AZURE linux-nd40rsv2-standard (matched to gpu.v100.1),8x NVIDIA V100 (price divided by 8 for single GPU)
+azure,linux-b4plsv2-standard,m1.large,4,8.0,,none,86.87,0.05,AZURE linux-b4plsv2-standard (matched to m1.large),
+azure,linux-b2plsv2-standard,m1.medium,2,4.0,,none,24.53,0.05,AZURE linux-b2plsv2-standard (matched to m1.medium),
 digitalocean,g-16vcpu-64gb,gp.2xlarge,16,64.0,,none,504.00,0.10,DIGITALOCEAN g-16vcpu-64gb (matched to gp.2xlarge),
 digitalocean,g-32vcpu-128gb,gp.4xlarge,32,128.0,,none,1008.00,0.10,DIGITALOCEAN g-32vcpu-128gb (matched to gp.4xlarge),
 digitalocean,g-48vcpu-192gb-intel,gp.6xlarge,48,192.0,,none,1814.00,0.10,DIGITALOCEAN g-48vcpu-192gb-intel (matched to gp.6xlarge),
@@ -33,6 +46,9 @@ digitalocean,s-4vcpu-16gb-amd,gp.large,4,16.0,,none,84.00,0.10,DIGITALOCEAN s-4v
 digitalocean,s-2vcpu-8gb-amd,gp.medium,2,8.0,,none,42.00,0.10,DIGITALOCEAN s-2vcpu-8gb-amd (matched to gp.medium),
 digitalocean,s-2vcpu-4gb,gp.small,2,4.0,,none,24.00,0.10,DIGITALOCEAN s-2vcpu-4gb (matched to gp.small),
 digitalocean,s-8vcpu-32gb-amd,gp.xlarge,8,32.0,,none,168.00,0.10,DIGITALOCEAN s-8vcpu-32gb-amd (matched to gp.xlarge),
+digitalocean,g5_5-32vcpu-128gb-intel,gpu.v100.1,32,128.0,,none,1469.20,0.10,DIGITALOCEAN g5_5-32vcpu-128gb-intel (matched to gpu.v100.1),
+digitalocean,s-4vcpu-8gb,m1.large,4,8.0,,none,48.00,0.10,DIGITALOCEAN s-4vcpu-8gb (matched to m1.large),
+digitalocean,s-2vcpu-4gb,m1.medium,2,4.0,,none,24.00,0.10,DIGITALOCEAN s-2vcpu-4gb (matched to m1.medium),
 gcp,a2-highgpu-4g,g1.a100.80gb.x1,48,340.0,,none,1460.00,0.04,GCP a2-highgpu-4g (matched to g1.a100.80gb.x1),4x NVIDIA A100 (price divided by 4 for single GPU)
 gcp,e2-standard-16,gp.2xlarge,16,64.0,,none,309.52,0.04,GCP e2-standard-16 (matched to gp.2xlarge),
 gcp,e2-standard-32,gp.4xlarge,32,128.0,,none,619.04,0.04,GCP e2-standard-32 (matched to gp.4xlarge),
@@ -42,6 +58,9 @@ gcp,e2-standard-2,gp.medium,2,8.0,,none,38.69,0.04,GCP e2-standard-2 (matched to
 gcp,e2-standard-2,gp.small,2,8.0,,none,38.69,0.04,GCP e2-standard-2 (matched to gp.small),
 gcp,e2-standard-8,gp.xlarge,8,32.0,,none,154.76,0.04,GCP e2-standard-8 (matched to gp.xlarge),
 gcp,a2-highgpu-4g,gpu.a100.x1,48,340.0,,none,1460.00,0.04,GCP a2-highgpu-4g (matched to gpu.a100.x1),4x NVIDIA A100 (price divided by 4 for single GPU)
+gcp,a2-highgpu-2g,gpu.v100.1,24,170.0,,none,1460.00,0.04,GCP a2-highgpu-2g (matched to gpu.v100.1),2x NVIDIA A100 (price divided by 2 for single GPU)
+gcp,e2-standard-4,m1.large,4,16.0,,none,77.38,0.04,GCP e2-standard-4 (matched to m1.large),
+gcp,e2-standard-2,m1.medium,2,8.0,,none,38.69,0.04,GCP e2-standard-2 (matched to m1.medium),
 hetzner,ccx43,gp.2xlarge,16,64.0,,none,111.59,0.05,HETZNER ccx43 (matched to gp.2xlarge),
 hetzner,ccx53,gp.4xlarge,32,128.0,,none,222.59,0.05,HETZNER ccx53 (matched to gp.4xlarge),
 hetzner,ccx63,gp.6xlarge,48,192.0,,none,333.59,0.05,HETZNER ccx63 (matched to gp.6xlarge),
@@ -49,6 +68,8 @@ hetzner,ccx23,gp.large,4,16.0,,none,29.59,0.05,HETZNER ccx23 (matched to gp.larg
 hetzner,ccx13,gp.medium,2,8.0,,none,15.09,0.05,HETZNER ccx13 (matched to gp.medium),
 hetzner,cpx21,gp.small,3,4.0,,none,10.59,0.05,HETZNER cpx21 (matched to gp.small),
 hetzner,ccx33,gp.xlarge,8,32.0,,none,56.09,0.05,HETZNER ccx33 (matched to gp.xlarge),
+hetzner,cpx31,m1.large,4,8.0,,none,18.59,0.05,HETZNER cpx31 (matched to m1.large),
+hetzner,cpx21,m1.medium,3,4.0,,none,10.59,0.05,HETZNER cpx21 (matched to m1.medium),
 linode,g6-standard-16,gp.2xlarge,16,64.0,,none,384.00,0.10,LINODE g6-standard-16 (matched to gp.2xlarge),
 linode,g6-standard-32,gp.4xlarge,32,192.0,,none,1152.00,0.10,LINODE g6-standard-32 (matched to gp.4xlarge),
 linode,g6-dedicated-56,gp.6xlarge,56,256.0,,none,2304.00,0.10,LINODE g6-dedicated-56 (matched to gp.6xlarge),
@@ -56,6 +77,8 @@ linode,g6-standard-6,gp.large,6,16.0,,none,96.00,0.10,LINODE g6-standard-6 (matc
 linode,g6-standard-4,gp.medium,4,8.0,,none,48.00,0.10,LINODE g6-standard-4 (matched to gp.medium),
 linode,g6-standard-2,gp.small,2,4.0,,none,24.00,0.10,LINODE g6-standard-2 (matched to gp.small),
 linode,g6-standard-8,gp.xlarge,8,32.0,,none,192.00,0.10,LINODE g6-standard-8 (matched to gp.xlarge),
+linode,g6-standard-4,m1.large,4,8.0,,none,48.00,0.10,LINODE g6-standard-4 (matched to m1.large),
+linode,g6-standard-2,m1.medium,2,4.0,,none,24.00,0.10,LINODE g6-standard-2 (matched to m1.medium),
 vultr,vultr-16c-64gb,gp.2xlarge,16,64.0,,none,350.40,0.05,VULTR vultr-16c-64gb (matched to gp.2xlarge),
 vultr,vultr-32c-128gb,gp.4xlarge,32,128.0,,none,700.80,0.05,VULTR vultr-32c-128gb (matched to gp.4xlarge),
 vultr,vultr-48c-192gb,gp.6xlarge,48,192.0,,none,1051.20,0.05,VULTR vultr-48c-192gb (matched to gp.6xlarge),
@@ -63,3 +86,5 @@ vultr,vultr-6c-16gb,gp.large,6,16.0,,none,80.30,0.05,VULTR vultr-6c-16gb (matche
 vultr,vultr-4c-8gb,gp.medium,4,8.0,,none,43.80,0.05,VULTR vultr-4c-8gb (matched to gp.medium),
 vultr,vultr-1c-5gb,gp.small,1,5.0,,none,2.92,0.05,VULTR vultr-1c-5gb (matched to gp.small),
 vultr,vultr-8c-32gb,gp.xlarge,8,32.0,,none,175.20,0.05,VULTR vultr-8c-32gb (matched to gp.xlarge),
+vultr,vultr-4c-8gb,m1.large,4,8.0,,none,43.80,0.05,VULTR vultr-4c-8gb (matched to m1.large),
+vultr,vultr-2c-4gb,m1.medium,2,4.0,,none,21.90,0.05,VULTR vultr-2c-4gb (matched to m1.medium),

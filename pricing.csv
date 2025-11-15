@@ -1,11 +1,11 @@
 Cloud,Flavor,Matched_OpenStack_Flavor,Cores,Memory_GB,Boot_Storage_GB,GPU,Compute_Price_Per_Month,Storage_Price_Per_GB_Per_Month,Description,Notes
 openstack,gp.small,,1,4,0,none,5.03,0.14,gp.small OpenStack flavor,Boot from disk - no attached storage charged
-openstack,gp.medium,,2,8,0,none,5.03,0.14,gp.medium OpenStack flavor,Boot from disk - no attached storage charged
-openstack,gp.large,,4,16,0,none,5.03,0.14,gp.large OpenStack flavor,Boot from disk - no attached storage charged
-openstack,gp.xlarge,,8,32,0,none,5.03,0.14,gp.xlarge OpenStack flavor,Boot from disk - no attached storage charged
-openstack,gp.2xlarge,,16,64,0,none,5.03,0.14,gp.2xlarge OpenStack flavor,Boot from disk - no attached storage charged
-openstack,gp.4xlarge,,32,128,0,none,5.03,0.14,gp.4xlarge OpenStack flavor,Boot from disk - no attached storage charged
-openstack,gp.6xlarge,,48,192,0,none,5.03,0.14,gp.6xlarge OpenStack flavor,Boot from disk - no attached storage charged
+openstack,gp.medium,,2,8,0,none,10.06,0.14,gp.medium OpenStack flavor,Boot from disk - no attached storage charged
+openstack,gp.large,,4,16,0,none,20.12,0.14,gp.large OpenStack flavor,Boot from disk - no attached storage charged
+openstack,gp.xlarge,,8,32,0,none,40.24,0.14,gp.xlarge OpenStack flavor,Boot from disk - no attached storage charged
+openstack,gp.2xlarge,,16,64,0,none,80.48,0.14,gp.2xlarge OpenStack flavor,Boot from disk - no attached storage charged
+openstack,gp.4xlarge,,32,128,0,none,160.96,0.14,gp.4xlarge OpenStack flavor,Boot from disk - no attached storage charged
+openstack,gp.6xlarge,,48,192,0,none,241.44,0.14,gp.6xlarge OpenStack flavor,Boot from disk - no attached storage charged
 openstack,gpu.a100.x1,,24,230,0,a100,546.45,0.14,gpu.a100.x1 with 1x A100 GPU,Boot from disk - 1x A100 GPU
 openstack,g1.a100.80gb.x1,,24,230,0,a100,546.45,0.14,g1.a100.80gb.x1 with 1x A100 GPU,Boot from disk - 1x A100 GPU
 aws,p4d.24xlarge,g1.a100.80gb.x1,96,1152.0,,none,2003.63,0.08,AWS p4d.24xlarge (matched to g1.a100.80gb.x1),"GPU instance, Xeon Platinum 8275L, 4x 100 Gigabit, 8x NVIDIA A100 (price divided by 8 for single GPU)"

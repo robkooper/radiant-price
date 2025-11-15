@@ -20,7 +20,7 @@ This document provides comprehensive guidance for AI assistants (like Claude) wo
 
 ```
 radiant-price/
-├── estimate.py              # Main analysis tool (1036 lines)
+├── estimate.py              # Main analysis tool (~1350 lines)
 ├── update.py                # Pricing updater for cloud providers (207 lines)
 ├── pricing.csv              # Central pricing database for all providers
 ├── requirements.txt         # Python dependencies
@@ -92,10 +92,16 @@ class VM:
     status: str
     cores: int
     ram_mb: int
-    storage_gb: int
+    boot_storage_gb: int
+    additional_storage_gb: int
     gpu_type: Optional[str]  # e.g., "A100", "V100"
     gpu_count: int
-    floating_ip: bool
+
+    def get_billable_storage(self, provider: str) -> int:
+        """Calculate billable storage (GB) for a provider."""
+    
+    def get_provider_flavor(self, provider: str) -> Optional[str]:
+        """Get the provider's instance flavor name for this VM."""
 
     def get_cost(self, provider: str) -> Optional[float]:
         """Calculate monthly cost for this VM on given provider.
@@ -217,18 +223,20 @@ python3 update.py newprovider --dry-run
 ### Modifying estimate.py Logic
 
 **When changing VM detection:**
-- Modify `list_vms()` function
+- Modify `list_vms()` function (line 322+)
 - Update OpenStack CLI queries as needed
 - Test with: `python3 estimate.py --cloud software`
 
 **When changing cost calculation:**
 - Modify `VM.get_cost()` method - this is the single place for all cost calculations
-- Cost formula: `base_compute_price + (additional_storage_gb * storage_price_per_gb)`
+- Helper methods: `VM.get_billable_storage()` and `VM.get_provider_flavor()`
+- Cost formula: `base_compute_price + (billable_storage_gb * storage_price_per_gb)`
 - Test: `python3 estimate.py cookiemonster --comparison aws`
 
 **When adding new report formats:**
 - Add new `generate_<format>_report()` function
-- Report functions simply loop over VMs and call `vm.get_cost(provider)` to calculate on-demand
+- Use `calculate_totals(vms, provider)` helper to get aggregated stats
+- Report functions loop over VMs and call `vm.get_cost(provider)` to calculate on-demand
 - Update CLI choices in `main()`
 - Update output handling in `main()`
 
@@ -254,7 +262,7 @@ python3 update.py all
 ### GPU Detection and Handling
 
 **GPU Detection Rules:**
-- GPUs detected from VM names using regex patterns in `detect_gpu()` (line 268)
+- GPUs detected from VM names using regex patterns in `detect_gpu()` (line 269)
 - Patterns: `a100|a_100`, `v100|v_100`
 - Count parsing: `gpu.a100.x2` → 2x A100 GPUs
 
@@ -417,9 +425,9 @@ with open('pricing.csv') as f:
 
 1. Check pricing.csv for correct flavor pricing
 2. Verify OpenStack flavor name matches CSV exactly
-3. Check storage calculation: `vm.storage_gb - boot_storage_gb`
+3. Check storage calculation using `vm.get_billable_storage(provider)` helper
 4. Review `VM.get_cost()` method logic - this is the single source of all cost calculations
-5. Add debug prints: `print(f"VM {vm.name}: flavor={vm.flavor}, os_cost={vm.get_cost('openstack')}", file=sys.stderr)`
+5. Add debug prints: `print(f"VM {vm.name}: flavor={vm.flavor}, os_cost={vm.get_cost('openstack')}, billable_storage={vm.get_billable_storage('openstack')}", file=sys.stderr)`
 6. Verify PROVIDER_PRICING global dict is loaded correctly
 7. Missing costs will return `None` - check if VM flavor exists in PROVIDER_PRICING[provider]
 
@@ -480,13 +488,17 @@ When adding a new cloud provider or changing how providers work:
 
 **Bottlenecks:**
 - OpenStack CLI calls are slow (serial, subprocess overhead)
-- `openstack server show` called for each VM individually
+- `openstack server show` called for each uncached VM individually
 
-**Optimization Strategies:**
+**Current Optimizations:**
+- VM data caching with configurable TTL (default 24 hours)
+- Cache stores complete VM details to avoid re-querying OpenStack
+- Lazy-loading of flavor cache (only fetched when needed)
+
+**Future Optimization Strategies:**
 1. Batch OpenStack queries where possible
-2. Cache OpenStack responses for repeated queries
-3. Use OpenStack SDK directly instead of CLI (requires openstacksdk)
-4. Parallelize VM detail fetching with threading/asyncio
+2. Use OpenStack SDK directly instead of CLI (requires openstacksdk)
+3. Parallelize VM detail fetching with threading/asyncio
 
 ## Error Handling Patterns
 
@@ -690,15 +702,55 @@ python3 estimate.py --cloud software --format json
 
 ### Key Files to Reference
 
-- `estimate.py` (lines 24-175) - Pricing data loading
-- `estimate.py` (lines 289-421) - VM discovery and enrichment
-- `estimate.py` (lines 424-507) - Cost calculation and provider matching
+- `estimate.py` (lines 25-107) - Pricing data loading
+- `estimate.py` (lines 110-185) - VM dataclass with helper methods
+- `estimate.py` (lines 322-560) - VM discovery and enrichment with caching
+- `estimate.py` (lines 564-600) - Provider comparison logic
+- `estimate.py` (lines 603-1010) - Report generation functions
 - `providers/matcher.py` - Flavor matching algorithm
 - `update.py` - Pricing update orchestration
 
 ## Recent Major Simplifications (November 2025)
 
 This section documents the major code simplifications made to the codebase, making it cleaner and more maintainable.
+
+### November 15, 2025 - Code Cleanup and Consolidation
+
+**Removed Unused/Redundant Code:**
+- Removed `server_to_cache_format()` function - was creating unnecessary data transformations
+- Removed `list_vms_cached()` wrapper - consolidated into single `list_vms()` function with cache_dir parameter
+- Removed dead code path storing `_details` in cache (was never read back)
+- Removed duplicate variable names (e.g., `_csv` suffix)
+
+**Added Helper Methods to VM Class:**
+- `get_billable_storage(provider)` - Calculates storage beyond what flavor includes
+- `get_provider_flavor(provider)` - Gets provider's instance flavor name
+- These methods centralize logic previously duplicated across report functions
+
+**Added Common Utility Functions:**
+- `format_price(value)` - Centralized price formatting (removed duplicate nested function in summary report)
+- `calculate_totals(vms, provider)` - Calculates all totals once instead of in each report function
+  - Returns dict with: vms, cores, ram_gb, storage totals, GPUs, has_gpu flag, and costs
+
+**Consolidated Duplicate Code:**
+- All report functions (table, CSV, JSON, markdown, summary) now use:
+  - `calculate_totals()` instead of manually summing in each function
+  - `vm.get_provider_flavor()` instead of manual `provider_pricing[provider][flavor]["flavor"]` lookups
+  - Removed duplicate `total_os_cost` and `total_comparison_cost` tracking loops
+- Summary report now uses:
+  - Module-level `format_price()` instead of nested function definition
+  - `vm.get_billable_storage()` instead of duplicating storage calculation logic
+
+**Impact:**
+- Reduced code size by ~80-100 lines
+- Eliminated 5+ instances of duplicate code
+- Centralized cost calculations in VM class methods
+- Improved maintainability - changes to cost logic only need to happen in VM methods
+
+**Key Architecture Benefits:**
+- **Single Source of Truth**: All cost calculations go through `VM.get_cost()`
+- **DRY Principle**: Helper methods eliminate duplicate storage/flavor lookup logic
+- **Cleaner Reports**: Report functions are now pure formatters without business logic
 
 ### 1. Unified Pricing Data Structure
 
@@ -840,12 +892,13 @@ When making significant changes, update this section:
 
 ---
 
-**Document Version:** 2.1
+**Document Version:** 2.2
 **Last Updated:** 2025-11-15
 **Maintained By:** AI Assistants (Claude)
 **Status:** Production Ready
 
 **Version History:**
+- **v2.2 (2025-11-15)**: Code cleanup - removed unused functions, added VM helper methods (get_billable_storage, get_provider_flavor), added utility functions (format_price, calculate_totals), consolidated duplicate code across all report functions, updated line number references
 - **v2.1 (2025-11-15)**: Streamlined documentation structure - removed redundant files (QUICKSTART.md, CONFIG.md, FEATURES.md, INDEX.md), consolidated into README.md, CLAUDE.md, and CONTRIBUTING.md
 - **v2.0 (2025-11-14)**: Updated architecture documentation to reflect simplified codebase, added "Recent Major Simplifications" section, removed references to deprecated functions, updated CLI examples to show multiple VM pattern support, documented table-first approach and on-demand calculation principles
 

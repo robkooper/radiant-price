@@ -131,6 +131,34 @@ class VM:
         """RAM in gigabytes"""
         return self.ram_mb / 1024
 
+    def get_billable_storage(self, provider: str) -> int:
+        """
+        Calculate billable storage (GB) for a provider.
+
+        Returns storage beyond what the flavor includes.
+        """
+        if provider not in PROVIDER_PRICING:
+            return 0
+
+        if self.flavor not in PROVIDER_PRICING[provider]:
+            return 0
+
+        flavor_provided_storage = PROVIDER_PRICING[provider][self.flavor].get(
+            "boot_storage_gb", 0
+        )
+        total_storage_gb = self.boot_storage_gb + self.additional_storage_gb
+        return max(total_storage_gb - flavor_provided_storage, 0)
+
+    def get_provider_flavor(self, provider: str) -> Optional[str]:
+        """Get the provider's instance flavor name for this VM."""
+        if provider not in PROVIDER_PRICING:
+            return None
+
+        if self.flavor not in PROVIDER_PRICING[provider]:
+            return None
+
+        return PROVIDER_PRICING[provider][self.flavor].get("flavor")
+
     def get_cost(self, provider: str) -> Optional[float]:
         """
         Calculate monthly cost for a VM on a given provider.
@@ -155,13 +183,7 @@ class VM:
         # Calculate cost: base price + storage cost (beyond what flavor provides)
         flavor_compute_price = flavor_pricing.get("price", 0)
         storage_price = flavor_pricing.get("storage_price", 0)
-        flavor_provided_storage = flavor_pricing.get("boot_storage_gb", 0)
-
-        # Storage cost only for storage beyond what the flavor includes
-        # Total storage = boot_storage + additional_storage
-        # Billable storage = max(total - flavor_provided, 0)
-        total_storage_gb = self.boot_storage_gb + self.additional_storage_gb
-        billable_storage_gb = max(total_storage_gb - flavor_provided_storage, 0)
+        billable_storage_gb = self.get_billable_storage(provider)
         storage_cost = billable_storage_gb * storage_price
 
         return flavor_compute_price + storage_cost
@@ -172,33 +194,6 @@ def get_cache_path(cache_dir: str, cloud: str) -> str:
     """Get the path to the cache file for a given cloud"""
     os.makedirs(cache_dir, exist_ok=True)
     return os.path.join(cache_dir, f"{cloud}.json")
-
-
-def server_to_cache_format(server: Dict) -> Dict:
-    """
-    Convert a server dict (from cache or freshly fetched) to clean cache format.
-
-    If the server is already in clean format (has flavor_name), return as-is.
-    If it's in raw OpenStack format, extract the ID, Name and Status, rest will be None.
-    """
-    # If already in cache format, return as-is
-    if "flavor_name" in server:
-        return server
-
-    # Raw OpenStack format - convert to cache format
-    # We'll keep ID, Name and Status; drives/flavor will be None until fetched
-    return {
-        "ID": server.get("ID", ""),
-        "Name": server.get("Name", ""),
-        "Status": server.get("Status", "UNKNOWN"),
-        "flavor_name": None,
-        "cores": None,
-        "ram_mb": None,
-        "boot_storage_gb": None,
-        "additional_storage_gb": None,
-        "gpu_type": None,
-        "gpu_count": None,
-    }
 
 
 def load_cache(cache_file: str, cache_max_age_hours: float) -> Optional[List[Dict]]:
@@ -240,21 +235,16 @@ def save_cache(cache_file: str, servers: List[Dict], cloud: str) -> None:
     """
     Save servers to cache file.
 
-    Normalizes all servers to clean cache format before saving.
-
     Args:
         cache_file: Path to cache file
         servers: List of server dicts to cache
         cloud: Cloud name
     """
     try:
-        # Normalize all servers to clean cache format
-        normalized_servers = [server_to_cache_format(server) for server in servers]
-
         cache_data = {
             "timestamp": time.time(),
             "cloud": cloud,
-            "servers": normalized_servers,
+            "servers": servers,
         }
 
         with open(cache_file, "w") as f:
@@ -297,37 +287,42 @@ def detect_gpu(vm_name: str) -> Tuple[Optional[str], int]:
     return None, 0
 
 
-def list_vms_cached(
-    cloud: str,
-    vm_filter: Optional[List[str]] = None,
-    cache_dir: str = ".vm_cache",
-    cache_max_age_hours: float = 24,
-) -> List[VM]:
-    """
-    List VMs from OpenStack with caching support.
+def format_price(value: Optional[float]) -> str:
+    """Format a price value for display."""
+    if value is None or value == 0:
+        return "-"
+    return f"$ {value:.2f}"
 
-    Args:
-        cloud: OpenStack cloud name
-        vm_filter: Optional list of regex patterns to filter VMs
-        cache_dir: Directory to store cache files (default: .vm_cache)
-        cache_max_age_hours: Max cache age in hours (-1=never expire, 0=always refresh)
 
-    Returns:
-        List of VM objects (filtered)
+def calculate_totals(vms: List[VM], provider: Optional[str] = None) -> Dict:
     """
-    cache_file = get_cache_path(cache_dir, cloud)
-    return list_vms(
-        cloud,
-        vm_filter=vm_filter,
-        cache_file=cache_file,
-        cache_max_age_hours=cache_max_age_hours,
-    )
+    Calculate total resources and costs for a list of VMs.
+
+    Returns dict with totals for cores, ram, storage, GPUs, and costs.
+    """
+    totals = {
+        "vms": len(vms),
+        "cores": sum(vm.cores for vm in vms),
+        "ram_gb": int(sum(vm.ram_gb for vm in vms)),
+        "boot_storage_gb": sum(vm.boot_storage_gb for vm in vms),
+        "additional_storage_gb": sum(vm.additional_storage_gb for vm in vms),
+        "total_storage_gb": sum(vm.storage_gb for vm in vms),
+        "gpus": sum(vm.gpu_count for vm in vms),
+        "has_gpu": any(vm.gpu_type for vm in vms),
+        "os_cost": sum(vm.get_cost("openstack") or 0 for vm in vms),
+        "comparison_cost": 0.0,
+    }
+
+    if provider:
+        totals["comparison_cost"] = sum(vm.get_cost(provider) or 0 for vm in vms)
+
+    return totals
 
 
 def list_vms(
     cloud: str,
     vm_filter: Optional[List[str]] = None,
-    cache_file: Optional[str] = None,
+    cache_dir: str = ".vm_cache",
     cache_max_age_hours: float = 24,
 ) -> List[VM]:
     """
@@ -339,33 +334,24 @@ def list_vms(
     Args:
         cloud: OpenStack cloud name
         vm_filter: Optional list of regex patterns to filter VMs
-        cache_file: Path to cache file
-        cache_max_age_hours: Max cache age in hours
+        cache_dir: Directory to store cache files (default: .vm_cache)
+        cache_max_age_hours: Max cache age in hours (-1=never expire, 0=always refresh)
 
     Returns:
         List of VM objects (filtered)
     """
+    # Get cache file path
+    cache_file = get_cache_path(cache_dir, cloud)
+
     # Load server list (from cache or OpenStack)
-    if cache_file:
-        servers = load_cache(cache_file, cache_max_age_hours)
-        if servers is not None:
-            print(f"Using cached VMs from {cloud}", file=sys.stderr)
-        else:
-            # Cache miss - fetch from OpenStack
-            try:
-                output = run_openstack_command("server list -f json", cloud)
-                os_servers = json.loads(output)
-                # Convert to cache format
-                servers = [server_to_cache_format(s) for s in os_servers]
-            except json.JSONDecodeError:
-                print("Error: Could not parse OpenStack server list", file=sys.stderr)
-                sys.exit(1)
+    servers = load_cache(cache_file, cache_max_age_hours)
+    if servers is not None:
+        print(f"Using cached VMs from {cloud}", file=sys.stderr)
     else:
-        # No caching - just fetch from OpenStack
+        # Cache miss - fetch from OpenStack
         try:
             output = run_openstack_command("server list -f json", cloud)
-            os_servers = json.loads(output)
-            servers = [server_to_cache_format(s) for s in os_servers]
+            servers = json.loads(output)
         except json.JSONDecodeError:
             print("Error: Could not parse OpenStack server list", file=sys.stderr)
             sys.exit(1)
@@ -406,14 +392,9 @@ def list_vms(
                 details = json.loads(detail_output)
             except (json.JSONDecodeError, subprocess.CalledProcessError):
                 continue
-
-            # Store details in server for caching
-            server = dict(server)
-            server["_details"] = details
         else:
             # Use cached data - no need to query OpenStack
-            details = server.get("_details", {})
-            server = dict(server)
+            details = {}
 
         # Extract information
         status = server.get("Status", "UNKNOWN")
@@ -626,8 +607,8 @@ def generate_table_report(
     provider_pricing: Dict,
 ) -> str:
     """Generate a formatted table report"""
-    # Check if any VMs have GPUs
-    has_gpu = any(vm.gpu_type for vm in vms)
+    totals = calculate_totals(vms, provider)
+    has_gpu = totals["has_gpu"]
 
     # Build headers
     headers = [
@@ -649,8 +630,6 @@ def generate_table_report(
         )
 
     rows = []
-    total_os_cost = 0.0
-    total_comparison_cost = 0.0
 
     for vm in vms:
         os_cost = vm.get_cost("openstack")
@@ -675,9 +654,7 @@ def generate_table_report(
 
         if provider:
             comparison_cost = vm.get_cost(provider)
-            comparison_flavor = None
-            if comparison_cost is not None and vm.flavor in provider_pricing[provider]:
-                comparison_flavor = provider_pricing[provider][vm.flavor]["flavor"]
+            comparison_flavor = vm.get_provider_flavor(provider)
 
             row.extend(
                 [
@@ -690,44 +667,39 @@ def generate_table_report(
                     else "N/A",
                 ]
             )
-            if comparison_cost is not None:
-                total_comparison_cost += comparison_cost
 
-        if os_cost is not None:
-            total_os_cost += os_cost
         rows.append(row)
 
     # Add summary row
-    total_boot_storage = sum(vm.boot_storage_gb for vm in vms)
-    total_additional_storage = sum(vm.additional_storage_gb for vm in vms)
-
-    if total_additional_storage > 0:
-        summary_storage_display = f"{total_boot_storage} + {total_additional_storage}"
+    if totals["additional_storage_gb"] > 0:
+        summary_storage_display = (
+            f"{totals['boot_storage_gb']} + {totals['additional_storage_gb']}"
+        )
     else:
-        summary_storage_display = str(total_boot_storage)
+        summary_storage_display = str(totals["boot_storage_gb"])
 
     summary_row = [
         "TOTAL",
         "",
-        sum(vm.cores for vm in vms),
-        int(sum(vm.ram_gb for vm in vms)),
+        totals["cores"],
+        totals["ram_gb"],
         summary_storage_display,
     ]
 
     if has_gpu:
         summary_row.append("")
 
-    summary_row.append(f"${total_os_cost:>8.2f}")
+    summary_row.append(f"${totals['os_cost']:>8.2f}")
 
     if provider:
         summary_row.extend(
             [
                 "",
-                f"${total_comparison_cost:>8.2f}"
-                if total_comparison_cost > 0
+                f"${totals['comparison_cost']:>8.2f}"
+                if totals["comparison_cost"] > 0
                 else "N/A",
-                f"${(total_comparison_cost - total_os_cost):>8.2f}"
-                if total_comparison_cost > 0
+                f"${(totals['comparison_cost'] - totals['os_cost']):>8.2f}"
+                if totals["comparison_cost"] > 0
                 else "N/A",
             ]
         )
@@ -745,8 +717,8 @@ def generate_csv_report(
     provider_pricing: Dict,
 ) -> str:
     """Generate a CSV report"""
-    # Check if any VMs have GPUs
-    has_gpu = any(vm.gpu_type for vm in vms)
+    totals = calculate_totals(vms, provider)
+    has_gpu = totals["has_gpu"]
 
     output = []
 
@@ -771,9 +743,6 @@ def generate_csv_report(
 
     output.append(headers)
 
-    total_os_cost = 0.0
-    total_comparison_cost = 0.0
-
     for vm in vms:
         os_cost = vm.get_cost("openstack")
 
@@ -793,9 +762,7 @@ def generate_csv_report(
 
         if provider:
             comparison_cost = vm.get_cost(provider)
-            comparison_flavor = ""
-            if comparison_cost is not None and vm.flavor in provider_pricing[provider]:
-                comparison_flavor = provider_pricing[provider][vm.flavor]["flavor"]
+            comparison_flavor = vm.get_provider_flavor(provider) or ""
 
             row_data.extend(
                 [
@@ -806,38 +773,33 @@ def generate_csv_report(
                     else "",
                 ]
             )
-            if comparison_cost is not None:
-                total_comparison_cost += comparison_cost
 
-        if os_cost is not None:
-            total_os_cost += os_cost
         output.append(row_data)
 
     # Add summary
-    total_boot_storage_csv = sum(vm.boot_storage_gb for vm in vms)
-    total_additional_storage_csv = sum(vm.additional_storage_gb for vm in vms)
-
     summary = [
         "TOTAL",
         "",
-        sum(vm.cores for vm in vms),
-        int(sum(vm.ram_gb for vm in vms)),
-        total_boot_storage_csv,
-        total_additional_storage_csv,
+        totals["cores"],
+        totals["ram_gb"],
+        totals["boot_storage_gb"],
+        totals["additional_storage_gb"],
     ]
 
     if has_gpu:
         summary.extend(["", ""])
 
-    summary.append(f"{total_os_cost:.2f}")
+    summary.append(f"{totals['os_cost']:.2f}")
 
     if provider:
         summary.extend(
             [
                 "",
-                f"{total_comparison_cost:.2f}" if total_comparison_cost > 0 else "",
-                f"{(total_comparison_cost - total_os_cost):.2f}"
-                if total_comparison_cost > 0
+                f"{totals['comparison_cost']:.2f}"
+                if totals["comparison_cost"] > 0
+                else "",
+                f"{(totals['comparison_cost'] - totals['os_cost']):.2f}"
+                if totals["comparison_cost"] > 0
                 else "",
             ]
         )
@@ -857,9 +819,8 @@ def generate_json_report(
     provider_pricing: Dict,
 ) -> str:
     """Generate a JSON report"""
+    totals = calculate_totals(vms, provider)
     vms_data = []
-    total_os_cost = 0.0
-    total_comparison_cost = 0.0
 
     for vm in vms:
         os_cost = vm.get_cost("openstack")
@@ -881,17 +842,9 @@ def generate_json_report(
             },
         }
 
-        if os_cost is not None:
-            total_os_cost += os_cost
-
         if provider:
             comparison_cost = vm.get_cost(provider)
-            comparison_flavor = None
-            if comparison_cost is not None and vm.flavor in provider_pricing[provider]:
-                comparison_flavor = provider_pricing[provider][vm.flavor]["flavor"]
-
-            if comparison_cost is not None:
-                total_comparison_cost += comparison_cost
+            comparison_flavor = vm.get_provider_flavor(provider)
 
             vm_data["costs"].update(
                 {
@@ -910,27 +863,27 @@ def generate_json_report(
 
     # Build summary
     summary = {
-        "total_vms": len(vms),
-        "total_cores": sum(vm.cores for vm in vms),
-        "total_ram_gb": int(sum(vm.ram_gb for vm in vms)),
+        "total_vms": totals["vms"],
+        "total_cores": totals["cores"],
+        "total_ram_gb": totals["ram_gb"],
         "total_storage": {
-            "boot_gb": sum(vm.boot_storage_gb for vm in vms),
-            "additional_gb": sum(vm.additional_storage_gb for vm in vms),
-            "total_gb": sum(vm.storage_gb for vm in vms),
+            "boot_gb": totals["boot_storage_gb"],
+            "additional_gb": totals["additional_storage_gb"],
+            "total_gb": totals["total_storage_gb"],
         },
-        "total_gpus": sum(vm.gpu_count for vm in vms),
-        "total_cost_openstack": round(total_os_cost, 2),
+        "total_gpus": totals["gpus"],
+        "total_cost_openstack": round(totals["os_cost"], 2),
     }
 
     if provider:
         summary.update(
             {
                 "comparison_provider": provider,
-                "total_cost_comparison": round(total_comparison_cost, 2)
-                if total_comparison_cost > 0
+                "total_cost_comparison": round(totals["comparison_cost"], 2)
+                if totals["comparison_cost"] > 0
                 else None,
-                "total_savings": round(total_comparison_cost - total_os_cost, 2)
-                if total_comparison_cost > 0
+                "total_savings": round(totals["comparison_cost"] - totals["os_cost"], 2)
+                if totals["comparison_cost"] > 0
                 else None,
             }
         )
@@ -951,8 +904,8 @@ def generate_md_report(
     provider_pricing: Dict,
 ) -> str:
     """Generate a Markdown report"""
-    # Check if any VMs have GPUs
-    has_gpu = any(vm.gpu_type for vm in vms)
+    totals = calculate_totals(vms, provider)
+    has_gpu = totals["has_gpu"]
 
     # Build the markdown table
     md_lines = []
@@ -979,9 +932,6 @@ def generate_md_report(
     md_lines.append("| " + " | ".join(headers) + " |")
     md_lines.append("|" + "|".join(["---"] * len(headers)) + "|")
 
-    total_os_cost = 0.0
-    total_comparison_cost = 0.0
-
     for vm in vms:
         os_cost = vm.get_cost("openstack")
 
@@ -1005,9 +955,7 @@ def generate_md_report(
 
         if provider:
             comparison_cost = vm.get_cost(provider)
-            comparison_flavor = None
-            if comparison_cost is not None and vm.flavor in provider_pricing[provider]:
-                comparison_flavor = provider_pricing[provider][vm.flavor]["flavor"]
+            comparison_flavor = vm.get_provider_flavor(provider)
 
             row.extend(
                 [
@@ -1020,45 +968,39 @@ def generate_md_report(
                     else "N/A",
                 ]
             )
-            if comparison_cost is not None:
-                total_comparison_cost += comparison_cost
-
-        if os_cost is not None:
-            total_os_cost += os_cost
 
         md_lines.append("| " + " | ".join(row) + " |")
 
     # Add summary row
-    total_boot_storage = sum(vm.boot_storage_gb for vm in vms)
-    total_additional_storage = sum(vm.additional_storage_gb for vm in vms)
-
-    if total_additional_storage > 0:
-        summary_storage_display = f"{total_boot_storage} + {total_additional_storage}"
+    if totals["additional_storage_gb"] > 0:
+        summary_storage_display = (
+            f"{totals['boot_storage_gb']} + {totals['additional_storage_gb']}"
+        )
     else:
-        summary_storage_display = str(total_boot_storage)
+        summary_storage_display = str(totals["boot_storage_gb"])
 
     summary_row = [
         "**TOTAL**",
         "",
-        str(sum(vm.cores for vm in vms)),
-        str(int(sum(vm.ram_gb for vm in vms))),
+        str(totals["cores"]),
+        str(totals["ram_gb"]),
         summary_storage_display,
     ]
 
     if has_gpu:
         summary_row.append("")
 
-    summary_row.append(f"${total_os_cost:>8.2f}")
+    summary_row.append(f"${totals['os_cost']:>8.2f}")
 
     if provider:
         summary_row.extend(
             [
                 "",
-                f"${total_comparison_cost:>8.2f}"
-                if total_comparison_cost > 0
+                f"${totals['comparison_cost']:>8.2f}"
+                if totals["comparison_cost"] > 0
                 else "N/A",
-                f"${(total_comparison_cost - total_os_cost):>8.2f}"
-                if total_comparison_cost > 0
+                f"${(totals['comparison_cost'] - totals['os_cost']):>8.2f}"
+                if totals["comparison_cost"] > 0
                 else "N/A",
             ]
         )
@@ -1083,35 +1025,11 @@ def generate_summary_report(
 
     rows = []
 
-    # Calculate column widths for dynamic formatting
-    provider_col_width = (
-        len(headers[3]) if len(headers) > 3 else 0
-    )  # Provider Cost header width
-    difference_col_width = (
-        len(headers[4]) if len(headers) > 4 else 0
-    )  # Difference header width
-
-    # Helper function to format prices
-    def format_price(value):
-        """Format price as $ number"""
-        if value is None or value == 0:
-            return "-"
-        return f"$ {value:.2f}"
-
     # Helper function to get base compute price for a flavor
     def get_compute_price(vm, provider_name):
         if vm.flavor in provider_pricing.get(provider_name, {}):
             return float(provider_pricing[provider_name][vm.flavor].get("price", 0))
         return 0
-
-    # Helper function to get storage price per GB
-    def get_storage_price(provider_name):
-        # Get storage price from any flavor in the provider
-        for flavor_data in provider_pricing.get(provider_name, {}).values():
-            storage_price = flavor_data.get("storage_price", 0)
-            if storage_price:
-                return float(storage_price)
-        return 0.10  # Default
 
     # Calculate total resources
     total_cores = sum(vm.cores for vm in vms)
@@ -1178,25 +1096,25 @@ def generate_summary_report(
     else:
         storage_display = str(total_boot_storage)
 
-    # Calculate billable storage cost using same logic as get_cost()
-    # billable_storage = max(total_storage - flavor_provided_storage, 0)
-    os_storage_price = get_storage_price("openstack")
+    # Calculate storage costs using VM helper method
+    os_storage_cost = 0.0
+    comparison_storage_cost = 0.0
 
-    # For OpenStack, boot_storage_gb is 0, so billable = total - 0 = total
-    os_billable_storage = 0
     for vm in vms:
-        total_vm_storage = vm.boot_storage_gb + vm.additional_storage_gb
-        # Get flavor's provided storage
+        # Get storage price per GB
         if vm.flavor in provider_pricing.get("openstack", {}):
-            flavor_storage = provider_pricing["openstack"][vm.flavor].get(
-                "boot_storage_gb", 0
+            os_storage_price = provider_pricing["openstack"][vm.flavor].get(
+                "storage_price", 0
             )
-        else:
-            flavor_storage = 0
-        billable = max(total_vm_storage - flavor_storage, 0)
-        os_billable_storage += billable
+            os_storage_cost += vm.get_billable_storage("openstack") * os_storage_price
 
-    os_storage_cost = os_billable_storage * os_storage_price
+        if provider and vm.flavor in provider_pricing.get(provider, {}):
+            comp_storage_price = provider_pricing[provider][vm.flavor].get(
+                "storage_price", 0
+            )
+            comparison_storage_cost += (
+                vm.get_billable_storage(provider) * comp_storage_price
+            )
 
     storage_row = [
         "Storage (GB)",
@@ -1205,24 +1123,6 @@ def generate_summary_report(
     ]
 
     if provider:
-        comparison_storage_price = get_storage_price(provider)
-
-        # Calculate billable storage for comparison provider
-        comparison_billable_storage = 0
-        for vm in vms:
-            total_vm_storage = vm.boot_storage_gb + vm.additional_storage_gb
-            # Get flavor's provided storage
-            if vm.flavor in provider_pricing.get(provider, {}):
-                flavor_storage = provider_pricing[provider][vm.flavor].get(
-                    "boot_storage_gb", 0
-                )
-            else:
-                flavor_storage = 0
-            billable = max(total_vm_storage - flavor_storage, 0)
-            comparison_billable_storage += billable
-
-        comparison_storage_cost = comparison_billable_storage * comparison_storage_price
-
         storage_row.append(
             format_price(comparison_storage_cost)
             if comparison_storage_cost > 0
@@ -1362,7 +1262,7 @@ def main():
             print(f"Listing VMs matching: {args.vms[0]}", file=sys.stderr)
         else:
             print(f"Listing VMs: {', '.join(args.vms)}", file=sys.stderr)
-        vms = list_vms_cached(
+        vms = list_vms(
             args.cloud,
             vm_filter=args.vms,
             cache_dir=args.cache_dir,
@@ -1370,7 +1270,7 @@ def main():
         )
     else:
         print("Listing VMs", file=sys.stderr)
-        vms = list_vms_cached(
+        vms = list_vms(
             args.cloud,
             vm_filter=None,
             cache_dir=args.cache_dir,

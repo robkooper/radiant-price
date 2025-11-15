@@ -24,24 +24,19 @@ radiant-price/
 ├── update.py                # Pricing updater for cloud providers (207 lines)
 ├── pricing.csv              # Central pricing database for all providers
 ├── requirements.txt         # Python dependencies
-├── providers/               # Cloud provider pricing modules
-│   ├── __init__.py
-│   ├── matcher.py          # Flavor matching logic
-│   ├── aws.py              # AWS pricing fetcher
-│   ├── azure.py            # Azure pricing fetcher
-│   ├── gcp.py              # GCP pricing fetcher
-│   ├── linode.py           # Linode pricing fetcher
-│   ├── hetzner.py          # Hetzner pricing fetcher
-│   ├── vultr.py            # Vultr pricing fetcher
-│   └── digitalocean.py     # DigitalOcean pricing fetcher
-└── Documentation/
-    ├── README.md           # Complete user guide
-    ├── QUICKSTART.md       # Quick start guide
-    ├── CONFIG.md           # Configuration guide
-    ├── FEATURES.md         # Feature overview
-    ├── INDEX.md            # Documentation index
-    ├── 00_START_HERE.txt   # Initial user guide
-    └── example_usage.sh    # Usage examples
+├── README.md                # User guide with quick start and examples
+├── CLAUDE.md                # Comprehensive developer/AI guide (this file)
+├── CONTRIBUTING.md          # Guide for adding new cloud providers
+└── providers/               # Cloud provider pricing modules
+    ├── __init__.py
+    ├── matcher.py          # Flavor matching logic
+    ├── aws.py              # AWS pricing fetcher
+    ├── azure.py            # Azure pricing fetcher
+    ├── gcp.py              # GCP pricing fetcher
+    ├── linode.py           # Linode pricing fetcher
+    ├── hetzner.py          # Hetzner pricing fetcher
+    ├── vultr.py            # Vultr pricing fetcher
+    └── digitalocean.py     # DigitalOcean pricing fetcher
 ```
 
 ## Core Architecture
@@ -446,10 +441,10 @@ with open('pricing.csv') as f:
 
 ### Task: Improve Documentation
 
-1. **User docs:** Update README.md, QUICKSTART.md, CONFIG.md, FEATURES.md
+1. **User docs:** Update README.md
 2. **Developer docs:** Update this CLAUDE.md file
-3. **Code comments:** Add inline documentation for complex logic
-4. **Examples:** Update example_usage.sh with new use cases
+3. **Contributor docs:** Update CONTRIBUTING.md
+4. **Code comments:** Add inline documentation for complex logic
 
 ### Task: Optimize Performance
 
@@ -659,13 +654,9 @@ python3 estimate.py --cloud software --format json
 
 ### Internal Documentation
 
-- `README.md` - Complete user guide and feature overview
-- `QUICKSTART.md` - 5-minute getting started guide
-- `CONFIG.md` - Configuration and customization guide
-- `FEATURES.md` - Detailed feature list and technical specs
-- `INDEX.md` - Documentation navigation
-- `00_START_HERE.txt` - New user onboarding
-- `example_usage.sh` - Real-world usage examples
+- `README.md` - User guide with quick start, examples, and feature overview
+- `CLAUDE.md` - This file - comprehensive developer and AI assistant guide
+- `CONTRIBUTING.md` - Guide for adding new cloud providers
 
 ### Key Files to Reference
 
@@ -819,16 +810,13 @@ When making significant changes, update this section:
 
 ---
 
-**Document Version:** 2.0
-**Last Updated:** 2025-11-14
+**Document Version:** 2.1
+**Last Updated:** 2025-11-15
 **Maintained By:** AI Assistants (Claude)
 **Status:** Production Ready
 
-**Version 2.0 Changes:**
-- Updated architecture documentation to reflect simplified codebase
-- Added "Recent Major Simplifications" section documenting 8 major improvements
-- Removed references to deprecated functions (calculate_vm_cost, estimate_cost_by_provider, etc.)
-- Updated CLI examples to show multiple VM pattern support
-- Documented table-first approach and on-demand calculation principles
+**Version History:**
+- **v2.1 (2025-11-15)**: Streamlined documentation structure - removed redundant files (QUICKSTART.md, CONFIG.md, FEATURES.md, INDEX.md), consolidated into README.md, CLAUDE.md, and CONTRIBUTING.md
+- **v2.0 (2025-11-14)**: Updated architecture documentation to reflect simplified codebase, added "Recent Major Simplifications" section, removed references to deprecated functions, updated CLI examples to show multiple VM pattern support, documented table-first approach and on-demand calculation principles
 
 For questions or updates to this document, modify CLAUDE.md directly and commit changes.

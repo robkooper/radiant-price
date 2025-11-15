@@ -797,237 +797,30 @@ python3 estimate.py --cloud software --format json
 - `providers/matcher.py` - Flavor matching algorithm
 - `update.py` - Pricing update orchestration
 
-## Recent Major Simplifications (November 2025)
+## Version History
 
-This section documents the major code simplifications made to the codebase, making it cleaner and more maintainable.
+For detailed information about changes, please see [CHANGELOG.md](CHANGELOG.md).
 
-### November 15, 2025 - OpenStack SDK Migration
+### Architecture Evolution
 
-**Migrated from CLI to Python OpenStack SDK:**
-- Replaced `subprocess` calls to `openstack` CLI with direct SDK calls via `openstacksdk`
-- Removed `python-openstackclient` dependency (no longer needed)
-- All OpenStack operations now use Python API instead of shell commands
-- Added `get_openstack_connection(cloud)` helper with **singleton pattern** to manage SDK connection lifecycle
-  - Connection created only once on first call, then reused for all subsequent calls
-  - Avoids expensive initialization overhead on repeated calls
-  - Global variables `_openstack_connection` and `_openstack_cloud` cache the connection
-- Added `build_flavor_cache(conn)` to efficiently load all flavors at startup
-- Updated `list_vms()` to accept connection object instead of cloud string
-- Connection created once in `main()`, passed to all functions needing OpenStack access
-- **Fixed:** Volume attachments use `conn.compute.volume_attachments()` not `conn.block_storage.volume_attachments()`
+The codebase has evolved through several major simplifications:
 
-**Benefits:**
-- ✅ **Faster execution** - No subprocess overhead, direct API calls
-- ✅ **Better error handling** - SDK exceptions instead of parsing stderr
-- ✅ **More reliable** - No shell escaping issues or CLI version incompatibilities
-- ✅ **Type safety** - IDE autocomplete on SDK objects
-- ✅ **Simpler dependency chain** - One fewer external CLI tool required
+1. **Unified Pricing Data Structure** - Single `PROVIDER_PRICING` global dict instead of multiple data structures
+2. **Simplified Cost Calculation API** - Single `vm.get_cost(provider)` method instead of multiple helper functions
+3. **On-Demand Calculation** - Costs calculated when needed instead of stored in VM state
+4. **Streamlined Report Generation** - Report functions are pure formatters without business logic
+5. **Lazy Initialization** - OpenStack connection and flavor cache created only when needed
+6. **Singleton Pattern** - Global resources cached and reused for performance
 
-**Key API Changes:**
-- `list_vms(cloud, ...)` - Simplified signature, no longer requires passing connection object
-- `get_flavor(cloud, flavor_name)` - Singleton function for flavor lookups (lazy-loaded, cached)
-- Removed `run_openstack_command()` function entirely
-- OpenStack connection is lazily initialized via singleton pattern (only created when first needed)
-- Flavor cache is lazily initialized via singleton pattern (only loaded when first needed)
-- All functions that need the connection call `get_openstack_connection(cloud)` internally
-- All functions that need flavor info call `get_flavor(cloud, flavor_name)` internally
-- SDK handles authentication via `clouds.yaml` (same as before)
-- main() no longer creates or manages the connection lifecycle - fully decoupled
-
-**Backward Compatibility:**
-- Cache format unchanged (still JSON)
-- CLI arguments unchanged
-- All output formats unchanged
-- Pricing logic unchanged
-- User-facing behavior identical
-
-### November 15, 2025 - Code Cleanup and Consolidation
-
-**Removed Unused/Redundant Code:**
-- Removed `server_to_cache_format()` function - was creating unnecessary data transformations
-- Removed `list_vms_cached()` wrapper - consolidated into single `list_vms()` function with cache_dir parameter
-- Removed dead code path storing `_details` in cache (was never read back)
-- Removed duplicate variable names (e.g., `_csv` suffix)
-
-**Added Helper Methods to VM Class:**
-- `get_billable_storage(provider)` - Calculates storage beyond what flavor includes
-- `get_provider_flavor(provider)` - Gets provider's instance flavor name
-- These methods centralize logic previously duplicated across report functions
-
-**Added Common Utility Functions:**
-- `format_price(value)` - Centralized price formatting (removed duplicate nested function in summary report)
-- `calculate_totals(vms, provider)` - Calculates all totals once instead of in each report function
-  - Returns dict with: vms, cores, ram_gb, storage totals, GPUs, has_gpu flag, and costs
-
-**Consolidated Duplicate Code:**
-- All report functions (table, CSV, JSON, markdown, summary) now use:
-  - `calculate_totals()` instead of manually summing in each function
-  - `vm.get_provider_flavor()` instead of manual `provider_pricing[provider][flavor]["flavor"]` lookups
-  - Removed duplicate `total_os_cost` and `total_comparison_cost` tracking loops
-- Summary report now uses:
-  - Module-level `format_price()` instead of nested function definition
-  - `vm.get_billable_storage()` instead of duplicating storage calculation logic
-
-**Impact:**
-- Reduced code size by ~80-100 lines
-- Eliminated 5+ instances of duplicate code
-- Centralized cost calculations in VM class methods
-- Improved maintainability - changes to cost logic only need to happen in VM methods
-
-**Key Architecture Benefits:**
-- **Single Source of Truth**: All cost calculations go through `VM.get_cost()`
-- **DRY Principle**: Helper methods eliminate duplicate storage/flavor lookup logic
-- **Cleaner Reports**: Report functions are now pure formatters without business logic
-
-### 1. Unified Pricing Data Structure
-
-**Before:** Multiple separate data structures (`openstack_pricing`, `gpu_specs`, `openstack_flavors`, `provider_pricing`)
-
-**After:** Single unified `PROVIDER_PRICING` global dict
-```python
-PROVIDER_PRICING = {
-    "openstack": {flavor: {...}},
-    "aws": {flavor: {...}},
-    "gcp": {flavor: {...}},
-    ...
-}
-```
-
-**Benefits:**
-- Single source of truth for all pricing data
-- Simpler to query and maintain
-- Reduced memory footprint
-
-### 2. Simplified Cost Calculation API
-
-**Before:** Multiple helper functions (`calculate_vm_cost()`, `estimate_cost_by_provider()`)
-
-**After:** Single method on VM class
-```python
-vm.get_cost("aws")  # Returns Optional[float]
-```
-
-**Benefits:**
-- Clean, simple API
-- Calculates base price + additional storage in one place
-- Easy to understand and debug
-
-### 3. Removed Redundant VM State
-
-**Before:** VMs stored `comparison_flavor` and `comparison_price` fields
-
-**After:** Calculate costs on-demand when needed
-
-**Benefits:**
-- No stale state
-- Always accurate (recalculates with current pricing)
-- Simpler VM dataclass
-
-### 4. Streamlined Report Generation
-
-**Before:** Report functions determined provider, called helper functions, managed state
-
-**After:** Report functions just loop and calculate
-```python
-for vm in vms:
-    os_cost = vm.get_cost("openstack")
-    comparison_cost = vm.get_cost(provider)
-    # Display the costs
-```
-
-**Benefits:**
-- Report functions are pure formatters
-- No business logic in presentation layer
-- Easier to add new report formats
-
-### 5. Provider Determination in main()
-
-**Before:** Each report function determined which provider to use
-
-**After:** Determined once in `main()`, passed to all reports
-
-**Benefits:**
-- Single point where cheapest provider is calculated
-- No duplicate `find_cheapest_provider()` calls
-- Consistent across all report formats
-
-### 6. list_vms() Accepts Multiple Patterns
-
-**Before:** Single regex string parameter
-
-**After:** Optional list of regex patterns
-```python
-list_vms(cloud, vm_filter=["cookie.*", "soma.*"])  # Matches ANY pattern
-list_vms(cloud, vm_filter=["cookiemonster"])       # Single pattern
-list_vms(cloud, vm_filter=None)                    # All VMs
-```
-
-**Benefits:**
-- Can filter for multiple VMs in one command
-- Simpler type signature (no Union[str, List[str]])
-- Consistent interface (always a list or None)
-
-### 7. OpenStack Excluded from find_cheapest_provider()
-
-**Before:** OpenStack was considered in the comparison
-
-**After:** OpenStack explicitly skipped (it's the baseline)
-
-**Benefits:**
-- `--comparison cheapest` now only considers alternative providers
-- Matches user expectations
-- Clearer intent in code
-
-### 8. Graceful Handling of Missing Pricing
-
-**Before:** Crashed with TypeError when flavor not in pricing.csv
-
-**After:** Returns None, displays "N/A" in reports
-
-**Benefits:**
-- Tool continues working even with incomplete pricing data
-- Easy to identify which VMs need pricing added
-- Better user experience
-
-### Key Architectural Principles
-
-1. **Table-First Approach**: Load CSV into single table, build one dict from it
-2. **On-Demand Calculation**: Calculate costs when needed, don't store
-3. **Single Source of Truth**: PROVIDER_PRICING is the only pricing data structure
-4. **Simple APIs**: `vm.get_cost(provider)` is the only cost calculation entry point
-5. **Separation of Concerns**: main() determines provider, reports just format data
-
-## Changelog Template
-
-When making significant changes, update this section:
-
-```markdown
-### [Version] - YYYY-MM-DD
-
-#### Added
-- New feature X
-
-#### Changed
-- Modified behavior of Y
-
-#### Fixed
-- Bug in Z calculation
-
-#### Removed
-- Deprecated feature A
-```
+See [CHANGELOG.md](CHANGELOG.md) for complete version history.
 
 ---
 
-**Document Version:** 2.2
+**Document Version:** 2.3
 **Last Updated:** 2025-11-15
 **Maintained By:** AI Assistants (Claude)
 **Status:** Production Ready
 
-**Version History:**
-- **v2.3 (2025-11-15)**: Migrated from OpenStack CLI to openstacksdk - replaced subprocess calls with direct Python SDK calls, removed python-openstackclient dependency, added get_openstack_connection() and build_flavor_cache() helpers, updated list_vms() to accept connection object
-- **v2.2 (2025-11-15)**: Code cleanup - removed unused functions, added VM helper methods (get_billable_storage, get_provider_flavor), added utility functions (format_price, calculate_totals), consolidated duplicate code across all report functions, updated line number references
-- **v2.1 (2025-11-15)**: Streamlined documentation structure - removed redundant files (QUICKSTART.md, CONFIG.md, FEATURES.md, INDEX.md), consolidated into README.md, CLAUDE.md, and CONTRIBUTING.md
-- **v2.0 (2025-11-14)**: Updated architecture documentation to reflect simplified codebase, added "Recent Major Simplifications" section, removed references to deprecated functions, updated CLI examples to show multiple VM pattern support, documented table-first approach and on-demand calculation principles
+For version history and detailed changelog, see [CHANGELOG.md](CHANGELOG.md).
 
 For questions or updates to this document, modify CLAUDE.md directly and commit changes.

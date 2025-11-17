@@ -704,33 +704,50 @@ beautifulsoup4>=4.11.0     # HTML parsing (for web scraping)
 
 **Current Branch:** `main`
 
-**Development:** Create feature branches off main
+**Development:** Work directly on main (no feature branches for Claude)
 
-### Commit Guidelines
+### Important Guidelines for AI Assistants
+
+**DO NOT COMMIT AUTOMATICALLY:**
+- Wait for explicit instruction to commit
+- Do not commit unless the user tells you to
+- Only commit files you have actually modified
+
+**When Committing (if instructed):**
+1. Only add files you modified: `git add file1.py file2.py`
+2. Do not add unmodified files (e.g., gpu.csv if you didn't modify it)
+3. Use descriptive, imperative-mood commit messages
+4. Reference related changes if applicable
+
+### Commit Message Style
 
 ```bash
-# Make changes
-git add file1.py file2.py
+# Good examples:
+git commit -m "Add reservation cost columns to summary report"
+git commit -m "Fix reservation storage calculation to use quota"
+git commit -m "Add RESERVATION row to table and CSV reports"
 
-# Commit with descriptive message
-git commit -m "Add support for H100 GPUs in pricing and detection"
-
-# Push to Claude branch
-git push -u origin claude/claude-md-mhye6vfhxhycwk9i-01RqeH9ZJBeXrBQiL5ko3bi4
+# Bad examples (avoid):
+git commit -m "Added feature"           # Use imperative mood
+git commit -m "Fixed stuff"             # Be specific
+git commit -m "Changes"                 # Not descriptive enough
 ```
 
-**Commit Message Style:**
-- Imperative mood: "Add feature" not "Added feature"
-- Clear, concise description
-- Reference issues if applicable
+### Workflow Example
 
-### Creating Pull Requests
+```bash
+# 1. Make changes to files
+# 2. Test changes
+python3 estimate.py --cloud software --format summary
 
-1. Ensure all tests pass
-2. Update documentation if needed
-3. Push to Claude branch
-4. Create PR with description of changes
-5. Include testing steps in PR description
+# 3. Review what you changed
+git status
+
+# 4. WAIT FOR USER INSTRUCTION to commit
+# 5. Only commit when user explicitly says so
+git add estimate.py CLAUDE.md
+git commit -m "Add GPU reservation feature to reports"
+```
 
 ## FAQ for AI Assistants
 
@@ -796,6 +813,226 @@ python3 estimate.py --cloud software --format json
 - `estimate.py` (lines 603-1010) - Report generation functions
 - `providers/matcher.py` - Flavor matching algorithm
 - `update.py` - Pricing update orchestration
+
+## GPU Reservations Feature
+
+### Overview
+
+The GPU Reservations feature tracks reserved GPU capacity (A100, V100) per OpenStack cloud and displays actual usage vs reserved capacity in reports. This helps teams understand their reserved GPU investment and utilization.
+
+### Files
+
+- **gpu.csv** - Defines GPU reservations per cloud
+  ```
+  cloud,a100,v100
+  cori,13,0
+  mmli,0,1
+  ```
+  - Optional file (gracefully disabled if missing)
+  - Maps cloud names to reserved A100 and V100 GPU counts
+  - Sourced from actual cloud quotas/reservations
+
+### Data Flow
+
+```
+gpu.csv (GPU reservations)
+    ↓
+load_gpu_reservations()
+    ↓
+calculate_reservation_totals(cloud, reservations, quota)
+    ↓
+Reports display: Actual vs Reservation with Difference
+```
+
+### Core Functions
+
+#### `load_gpu_reservations(csv_file="gpu.csv") → Dict[str, Dict]`
+- Loads GPU reservations from gpu.csv
+- Returns: `{cloud: {a100: count, v100: count}}`
+- Cached globally on first load
+- Gracefully handles missing file
+
+#### `get_openstack_quotas(conn) → Optional[Dict]`
+- Fetches resource quotas from OpenStack API
+- Returns: `{cores, ram_mb, storage_gb}`
+- Called automatically by `list_vms()`
+- Quotas cached alongside VMs in `.vm_cache/{cloud}.json`
+
+#### `calculate_reservation_totals(cloud, gpu_reservations, quota) → Optional[Dict]`
+- Calculates reserved resources and costs
+- **Data Source**: All reservation values (cores, RAM, storage, VMs) come from OpenStack quota
+- GPU counts and types come from gpu.csv (the only data not available in quotas)
+- Returns dict with:
+  - `cores`: from quota (not calculated from GPUs)
+  - `ram_gb`: from quota (not calculated from GPUs)
+  - `storage_gb`: boot (quota_instances × 40GB) + additional (quota_storage - boot)
+  - `gpus`: total GPU count from gpu.csv (a100_count + v100_count)
+  - `vms`: from quota (instances)
+  - `os_cost`: compute_cost + storage_cost (calculated from quota values and GPU specs)
+
+#### `list_vms(...) → Tuple[List[VM], Optional[Dict]]`
+- Updated to return tuple of (VMs, quota)
+- Quota is fetched from OpenStack on cache miss
+- Quota is saved with server list to cache
+- Quota is loaded from cache on subsequent runs
+
+### Cache Structure
+
+**Cache file format** (`.vm_cache/{cloud}.json`):
+```json
+{
+  "timestamp": 1234567890,
+  "cloud": "cori",
+  "servers": [...],
+  "quota": {
+    "cores": 512,
+    "ram_mb": 1048576,
+    "storage_gb": 50000,
+    "timestamp": 1234567890
+  }
+}
+```
+
+### Calculation Details
+
+#### Data Sources
+
+**From OpenStack Quota:**
+- `cores` - Total cores from quota minus GPU cores (see GPU core subtraction below)
+- `ram_gb` - Total memory from quota minus GPU memory (see GPU memory subtraction below)
+- `instances` - Total number of VMs that can be created (quota value)
+- `storage_gb` - Total storage capacity (quota value)
+
+**From gpu.csv:**
+- `a100_count` - Number of reserved A100 GPUs per cloud
+- `v100_count` - Number of reserved V100 GPUs per cloud
+
+#### GPU Core and Memory Subtraction
+
+**Important:** The OpenStack quota includes cores and memory allocated to GPU instances, which should not be counted as CPU resources.
+
+**Cores Calculation:**
+```
+total_cores = quota_cores - (a100_count × a100_cores) - (v100_count × v100_cores)
+            = quota_cores - (a100_count × 24) - (v100_count × 19)
+```
+
+**Memory Calculation:**
+```
+total_ram_gb = (quota_ram_mb - gpu_ram_mb) / 1024
+             = (quota_ram_mb - (a100_count × 230GB × 1024MB) - (v100_count × 37GB × 1024MB)) / 1024
+```
+
+Where:
+- A100: 24 cores, 230 GB RAM per GPU
+- V100: 19 cores, 37 GB RAM per GPU
+
+These values come from the `gpu.a100.x1` and `gpu.v100.1` flavors in `pricing.csv`.
+
+#### Reservation Storage Calculation
+
+**Important Note on OpenStack Storage Pricing:**
+At our OpenStack installation, each VM comes with 40 GB of included boot storage, BUT we still have to pay the storage cost for that 40 GB (unlike some cloud providers where boot storage is free). Therefore:
+
+- **Boot Storage**: `quota_instances × 40 GB` (each VM includes 40 GB)
+- **Additional Storage**: `quota_storage - boot_storage_gb` (storage beyond the included 40 GB per VM)
+- **Total Storage**: `boot_storage_gb + additional_storage_gb`
+- **Storage Cost**: `total_storage_gb × storage_price_per_gb` (we pay for ALL storage, including the included 40 GB per VM)
+
+**Example for Cori (45 reserved instances, 3800 GB quota):**
+- Boot storage: 45 × 40 = 1800 GB (included but charged)
+- Additional storage: 3800 - 1800 = 2000 GB (over-quota)
+- Total storage: 1800 + 2000 = 3800 GB
+- Storage cost: 3800 × $0.14 = $532.00 (pay for all 3800 GB)
+
+#### Reservation Cost Calculation
+- **CPU Compute Cost**: `quota_cores × per_core_price`
+  - Per-core price derived from any OpenStack flavor: `flavor_price / flavor_cores`
+- **GPU Compute Cost**: `(a100_count × a100_price) + (v100_count × v100_price)`
+  - Uses GPU counts from gpu.csv and GPU prices from pricing.csv
+- **Storage Cost**: `additional_storage_gb × storage_price_per_gb`
+  - Uses storage price from any OpenStack flavor (all have same price)
+- **Total Cost**: `cpu_compute_cost + gpu_compute_cost + storage_cost`
+
+### Report Display
+
+#### Summary Report
+Adds **Reservation** and **Difference** columns:
+```
+|         Unit |      Count |  OS Cost | Reservation | Difference |
+| Cores        |         22 | $231.06  |      $1092.90| +$861.84   |
+| RAM (GB)     |         88 |        - |           460|          - |
+| Storage (GB) |        860 | $120.40  |      $140.00 |  +$19.60   |
+| GPUs         |          4 | $500.00  |     $1000.00 | +$500.00   |
+| VMs          |          4 |        - |            8 |          - |
+| Total Cost   |            | $231.06  |     $2232.90 |+$2001.84   |
+```
+
+#### Table/CSV Reports
+Adds **RESERVATION** row at bottom with storage breakdown:
+```
+| TOTAL        |           |      22 |         88 | 160 + 700      | $  231.06 |
++---------------------------------------------------------------------------+
+| RESERVATION  |           |      48 |        460 | 320 + 680      | $ 2232.90 |
++---------------------------------------------------------------------------+
+```
+
+#### JSON Report
+Adds `reservation` section:
+```json
+{
+  "vms": [...],
+  "summary": {...},
+  "reservation": {
+    "cores": 48,
+    "ram_gb": 460,
+    "storage": {
+      "boot_gb": 320,
+      "additional_gb": 680,
+      "total_gb": 1000
+    },
+    "gpus": 13,
+    "vms": 13,
+    "cost_openstack": 2232.90
+  }
+}
+```
+
+### Usage Example
+
+```bash
+# Lists actual VMs and shows reserved capacity
+python3 estimate.py --cloud cori --format summary
+
+# Output shows:
+# Actual: 4 VMs, 22 cores, 88 GB RAM, 860 GB storage, 4 GPUs
+# Reserved: 8 VMs, 48 cores, 460 GB RAM, 1000 GB storage, 13 GPUs
+# Difference: +4 VMs, +26 cores, +372 GB RAM, +140 GB storage, +9 GPUs
+# Cost difference: +$2001.84/month
+```
+
+### Implementation Notes
+
+- **Optional**: gpu.csv is optional; feature gracefully disables if missing
+- **Caching**: Quotas cached with same TTL as VM cache (default 24 hours)
+- **Lazy Loading**: GPU reservations loaded once, cached in global variable
+- **Fallback**: If quota fetch fails, reservation calculations skip (no error)
+- **Backward Compatible**: Existing reports unaffected if gpu.csv missing
+
+### Common Tasks
+
+#### Add/Update Reservations
+1. Edit `gpu.csv` with new cloud name and GPU counts
+2. Next run will automatically use new reservations
+3. No code changes needed
+
+#### Change Quota Expiry
+- Modify `list_vms()` call with `cache_max_age_hours` parameter
+- Same TTL applies to both VM and quota caching
+
+#### Verify Quotas
+- Check `.vm_cache/{cloud}.json` for `quota` section
+- Compare with `openstack quota show --all` output
 
 ## Version History
 

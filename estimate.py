@@ -28,6 +28,7 @@ _openstack_connection: Optional[openstack.connection.Connection] = None
 _openstack_cloud: Optional[str] = None
 _flavor_cache: Optional[Dict[str, Dict]] = None
 _flavor_cache_cloud: Optional[str] = None
+_gpu_reservations: Optional[Dict[str, Dict]] = None
 
 
 # =============================================================================
@@ -207,16 +208,18 @@ def get_cache_path(cache_dir: str, cloud: str) -> str:
     return os.path.join(cache_dir, f"{cloud}.json")
 
 
-def load_cache(cache_file: str, cache_max_age_hours: float) -> Optional[List[Dict]]:
+def load_cache(
+    cache_file: str, cache_max_age_hours: float
+) -> Optional[Tuple[List[Dict], Optional[Dict]]]:
     """
-    Load server list from cache if it exists and is still valid.
+    Load server list and quota from cache if it exists and is still valid.
 
     Args:
         cache_file: Path to cache file
         cache_max_age_hours: Maximum age in hours (-1 = never expires, 0 = always refresh)
 
     Returns:
-        Server data from cache, or None if cache invalid/missing
+        Tuple of (servers, quota) from cache, or None if cache invalid/missing
     """
     # cache_max_age_hours == 0 means always refresh
     if cache_max_age_hours == 0:
@@ -236,20 +239,25 @@ def load_cache(cache_file: str, cache_max_age_hours: float) -> Optional[List[Dic
             if cache_age_hours > cache_max_age_hours:
                 return None  # Cache expired
 
-        return cache_data.get("servers", [])
+        servers = cache_data.get("servers", [])
+        quota = cache_data.get("quota")
+        return (servers, quota)
     except (json.JSONDecodeError, KeyError, ValueError):
         # Corrupted cache, treat as miss
         return None
 
 
-def save_cache(cache_file: str, servers: List[Dict], cloud: str) -> None:
+def save_cache(
+    cache_file: str, servers: List[Dict], cloud: str, quota: Optional[Dict] = None
+) -> None:
     """
-    Save servers to cache file.
+    Save servers and quota to cache file.
 
     Args:
         cache_file: Path to cache file
         servers: List of server dicts to cache
         cloud: Cloud name
+        quota: Optional quota dict with cores, ram_mb, storage_gb
     """
     try:
         cache_data = {
@@ -257,6 +265,13 @@ def save_cache(cache_file: str, servers: List[Dict], cloud: str) -> None:
             "cloud": cloud,
             "servers": servers,
         }
+
+        # Add quota if provided
+        if quota:
+            cache_data["quota"] = {
+                **quota,
+                "timestamp": time.time(),
+            }
 
         with open(cache_file, "w") as f:
             json.dump(cache_data, f, indent=2)
@@ -339,6 +354,105 @@ def get_flavor(cloud: str, flavor_name: str) -> Optional[Dict]:
     return _flavor_cache.get(flavor_name)
 
 
+def load_gpu_reservations(csv_file: str = "gpu.csv") -> Dict[str, Dict]:
+    """
+    Load GPU reservations from gpu.csv file.
+
+    Args:
+        csv_file: Path to gpu.csv file
+
+    Returns:
+        Dict of {cloud: {a100: count, v100: count}}
+    """
+    global _gpu_reservations
+
+    # Return cached reservations if already loaded
+    if _gpu_reservations is not None:
+        return _gpu_reservations
+
+    _gpu_reservations = {}
+
+    # Try to load gpu.csv
+    if not os.path.exists(csv_file):
+        print(
+            f"Note: {csv_file} not found - GPU reservations disabled", file=sys.stderr
+        )
+        return _gpu_reservations
+
+    try:
+        with open(csv_file, "r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if not row.get("cloud") or row["cloud"].strip().startswith("#"):
+                    continue
+
+                cloud = row["cloud"].strip()
+                try:
+                    a100 = int(row.get("a100", "0").strip() or 0)
+                    v100 = int(row.get("v100", "0").strip() or 0)
+                    _gpu_reservations[cloud] = {"a100": a100, "v100": v100}
+                except (ValueError, KeyError):
+                    print(
+                        f"Warning: Could not parse GPU reservations for {cloud}",
+                        file=sys.stderr,
+                    )
+    except Exception as e:
+        print(f"Warning: Could not load GPU reservations: {e}", file=sys.stderr)
+
+    return _gpu_reservations
+
+
+def get_openstack_quotas(conn: openstack.connection.Connection) -> Optional[Dict]:
+    """
+    Fetch resource quotas from OpenStack.
+
+    Note: This requires admin access. If unavailable, returns None and
+    reservation feature gracefully disables.
+
+    Args:
+        conn: OpenStack connection object
+
+    Returns:
+        Dict with {cores, ram_mb, storage_gb} or None if fetch fails or no admin access
+    """
+    try:
+        # Get the current project ID
+        project_id = conn.session.get_project_id()
+
+        if not project_id:
+            # No project ID available, skip quota fetch
+            return None
+
+        # Try to fetch compute quotas (admin-level call)
+        try:
+            quotas = conn.compute.get_quota_set(project_id)
+            cores = quotas.get("cores", 0) if quotas else 0
+            ram_mb = quotas.get("ram", 0) if quotas else 0
+            instances = quotas.get("instances", 0) if quotas else 0
+        except Exception:
+            # Admin access required - skip quotas
+            return None
+
+        # Try to fetch storage quotas (admin-level call)
+        storage_gb = 0
+        try:
+            volume_quotas = conn.block_storage.get_quota_set(project_id)
+            storage_gb = volume_quotas.get("gigabytes", 0) if volume_quotas else 0
+        except Exception:
+            # Admin access not available, continue without storage quota
+            pass
+
+        return {
+            "cores": cores,
+            "ram_mb": ram_mb,
+            "storage_gb": storage_gb,
+            "instances": instances,
+        }
+    except Exception:
+        # Silently fail - reservation feature will gracefully disable
+        return None
+
+
 def detect_gpu(vm_name: str) -> Tuple[Optional[str], int]:
     """Detect GPU type and count from VM name"""
     gpu_patterns = {
@@ -362,7 +476,7 @@ def detect_gpu(vm_name: str) -> Tuple[Optional[str], int]:
 
 def format_price(value: Optional[float]) -> str:
     """Format a price value for display."""
-    if value is None or value == 0:
+    if value is None:
         return "-"
     return f"$ {value:.2f}"
 
@@ -392,12 +506,125 @@ def calculate_totals(vms: List[VM], provider: Optional[str] = None) -> Dict:
     return totals
 
 
+def calculate_reservation_totals(
+    cloud: str,
+    gpu_reservations: Dict[str, Dict],
+    quota: Optional[Dict],
+) -> Optional[Dict]:
+    """
+    Calculate total resources and costs for GPU reservations.
+
+    Args:
+        cloud: OpenStack cloud name
+        gpu_reservations: GPU reservations dict {cloud: {a100: count, v100: count}}
+        quota: Quota dict {cores, ram_mb, storage_gb, instances} from OpenStack
+
+    Returns:
+        Dict with reservation totals, or None if no quota available
+    """
+    # Reservation ALWAYS comes from quota
+    # If cloud not in gpu_reservations, treat as 0 GPUs but still calculate from quota
+    if not quota:
+        return None
+
+    # Get GPU specs for cost calculation
+    a100_specs = PROVIDER_PRICING.get("openstack", {}).get("gpu.a100.x1")
+    v100_specs = PROVIDER_PRICING.get("openstack", {}).get("gpu.v100.1")
+
+    if not a100_specs or not v100_specs:
+        print(
+            "Warning: Could not find A100/V100 specs in pricing data",
+            file=sys.stderr,
+        )
+        return None
+
+    a100_price = a100_specs.get("price", 0)
+    a100_cores = a100_specs.get("cores", 24)
+    a100_ram_gb = a100_specs.get("memory_gb", 230)
+
+    v100_price = v100_specs.get("price", 0)
+    v100_cores = v100_specs.get("cores", 19)
+    v100_ram_gb = v100_specs.get("memory_gb", 37)
+
+    # Get reservation values from quota
+    quota_cores = quota.get("cores", 0)
+    quota_ram_mb = quota.get("ram_mb", 0)
+    total_storage_gb = quota.get("storage_gb", 0)
+    total_vms = quota.get("instances", 0)
+
+    # Get GPU counts from gpu_reservations (for cost calculation only)
+    # If cloud not in gpu_reservations, treat as 0 GPUs
+    reservation = gpu_reservations.get(cloud, {})
+    a100_count = reservation.get("a100", 0)
+    v100_count = reservation.get("v100", 0)
+    total_gpus = a100_count + v100_count
+
+    # Subtract GPU cores and memory from quota
+    # GPU cores should not be counted as CPU cores
+    gpu_cores = (a100_count * a100_cores) + (v100_count * v100_cores)
+    gpu_ram_mb = (a100_count * a100_ram_gb * 1024) + (v100_count * v100_ram_gb * 1024)
+
+    total_cores = max(quota_cores - gpu_cores, 0)
+    total_ram_gb = max((quota_ram_mb - gpu_ram_mb) / 1024, 0)
+
+    # Storage calculation from quota
+    # OpenStack includes 40 GB boot storage per VM, but we still pay for it
+    # Boot storage: quota_instances * 40GB per VM (included but charged)
+    # Additional storage: quota_storage - boot_storage_gb (over-quota)
+    boot_storage_gb = total_vms * 40
+    additional_storage_gb = max(total_storage_gb - boot_storage_gb, 0)
+
+    # Calculate costs
+    # CPU core cost: use any openstack flavor to get per-core price
+    cpu_price_per_core = 0
+    for flavor_name, flavor_data in PROVIDER_PRICING.get("openstack", {}).items():
+        if flavor_data.get("cores", 0) > 0 and flavor_data.get("price", 0) > 0:
+            cpu_price_per_core = flavor_data.get("price", 0) / flavor_data.get(
+                "cores", 1
+            )
+            break
+
+    # GPU compute cost: based on GPU counts
+    gpu_compute_cost = a100_price * a100_count + v100_price * v100_count
+
+    # CPU compute cost: cores * per-core price
+    cpu_compute_cost = total_cores * cpu_price_per_core
+
+    # Storage cost
+    storage_price = (
+        PROVIDER_PRICING.get("openstack", {})
+        .get("flash", {})
+        .get("storage_price", 0.14)
+    )
+
+    # Get storage price from any flavor (they all have the same storage price)
+    for flavor_data in PROVIDER_PRICING.get("openstack", {}).values():
+        storage_price = flavor_data.get("storage_price", 0.14)
+        break
+
+    storage_cost = additional_storage_gb * storage_price
+    total_cost = cpu_compute_cost + gpu_compute_cost + storage_cost
+
+    return {
+        "vms": total_vms,
+        "cores": total_cores,
+        "ram_gb": total_ram_gb,
+        "boot_storage_gb": boot_storage_gb,
+        "additional_storage_gb": additional_storage_gb,
+        "total_storage_gb": total_storage_gb,
+        "gpus": total_gpus,
+        "os_cost": total_cost,
+        "a100_count": a100_count,
+        "v100_count": v100_count,
+    }
+
+
 def list_vms(
     cloud: str,
     vm_filter: Optional[List[str]] = None,
     cache_dir: str = ".vm_cache",
     cache_max_age_hours: float = 24,
-) -> List[VM]:
+) -> Tuple[List[VM], Optional[Dict]]:
     """
     List VMs from OpenStack, optionally filtered by regex pattern(s).
 
@@ -413,16 +640,18 @@ def list_vms(
         cache_max_age_hours: Max cache age in hours (-1=never expire, 0=always refresh)
 
     Returns:
-        List of VM objects (filtered)
+        Tuple of (List of VM objects, optional quota dict with cores/ram_mb/storage_gb)
     """
     # Get the singleton OpenStack connection
     conn = get_openstack_connection(cloud)
     # Get cache file path
     cache_file = get_cache_path(cache_dir, cloud)
 
-    # Load server list (from cache or OpenStack)
-    servers = load_cache(cache_file, cache_max_age_hours)
-    if servers is not None:
+    # Load server list and quota (from cache or OpenStack)
+    quota = None
+    cache_result = load_cache(cache_file, cache_max_age_hours)
+    if cache_result is not None:
+        servers, quota = cache_result
         print(f"Using cached VMs from {cloud}", file=sys.stderr)
     else:
         # Cache miss - fetch from OpenStack using SDK
@@ -438,6 +667,9 @@ def list_vms(
                 }
                 for s in servers_from_api
             ]
+
+            # Fetch quotas
+            quota = get_openstack_quotas(conn)
         except Exception as e:
             print(
                 f"Error: Could not fetch server list from OpenStack: {e}",
@@ -634,11 +866,11 @@ def list_vms(
     # Clear progress line and show final count
     print(f"\rFound {len(vms)} VMs\033[K", file=sys.stderr)
 
-    # Save updated cache
+    # Save updated cache with quota
     if cache_file:
-        save_cache(cache_file, servers, cloud)
+        save_cache(cache_file, servers, cloud, quota)
 
-    return sorted(vms, key=lambda x: x.name)
+    return sorted(vms, key=lambda x: x.name), quota
 
 
 def find_cheapest_provider(vms: List[VM], all_provider_pricing: Dict) -> Optional[str]:
@@ -685,8 +917,12 @@ def generate_table_report(
     provider: Optional[str],
     provider_display: str,
     provider_pricing: Dict,
+    cloud: str = "",
+    gpu_reservations: Optional[Dict[str, Dict]] = None,
+    quota: Optional[Dict] = None,
+    vms_filtered: bool = False,
 ) -> str:
-    """Generate a formatted table report"""
+    """Generate a formatted table report with optional reservation row"""
     totals = calculate_totals(vms, provider)
     has_gpu = totals["has_gpu"]
 
@@ -786,6 +1022,43 @@ def generate_table_report(
 
     rows.append(summary_row)
 
+    # Add reservation row if available
+    reservation = None
+    if cloud and gpu_reservations and not vms_filtered:
+        reservation = calculate_reservation_totals(cloud, gpu_reservations, quota)
+
+    if reservation:
+        if reservation["additional_storage_gb"] > 0:
+            res_storage_display = f"{reservation['boot_storage_gb']} + {reservation['additional_storage_gb']}"
+        else:
+            res_storage_display = str(reservation["boot_storage_gb"])
+
+        res_row = [
+            "RESERVATION",
+            "",
+            reservation["cores"],
+            reservation["ram_gb"],
+            res_storage_display,
+        ]
+
+        if has_gpu:
+            res_row.append(
+                f"{reservation['gpus']}x mixed" if reservation["gpus"] > 0 else "-"
+            )
+
+        res_row.append(f"${reservation['os_cost']:>8.2f}")
+
+        if provider:
+            res_row.extend(
+                [
+                    "",
+                    "",
+                    "",
+                ]
+            )
+
+        rows.append(res_row)
+
     # Format as table using tabulate
     return tabulate(rows, headers=headers, tablefmt="grid")
 
@@ -795,6 +1068,10 @@ def generate_csv_report(
     provider: Optional[str],
     provider_display: str,
     provider_pricing: Dict,
+    cloud: str = "",
+    gpu_reservations: Optional[Dict[str, Dict]] = None,
+    quota: Optional[Dict] = None,
+    vms_filtered: bool = False,
 ) -> str:
     """Generate a CSV report"""
     totals = calculate_totals(vms, provider)
@@ -886,6 +1163,31 @@ def generate_csv_report(
 
     output.append(summary)
 
+    # Add reservation row if available
+    reservation = None
+    if cloud and gpu_reservations and not vms_filtered:
+        reservation = calculate_reservation_totals(cloud, gpu_reservations, quota)
+
+    if reservation:
+        res_row = [
+            "RESERVATION",
+            "",
+            reservation["cores"],
+            reservation["ram_gb"],
+            reservation["boot_storage_gb"],
+            reservation["additional_storage_gb"],
+        ]
+
+        if has_gpu:
+            res_row.extend(["", reservation["gpus"]])
+
+        res_row.append(f"{reservation['os_cost']:.2f}")
+
+        if provider:
+            res_row.extend(["", "", ""])
+
+        output.append(res_row)
+
     csv_output = []
     for row in output:
         csv_output.append(",".join(str(v) for v in row))
@@ -897,8 +1199,12 @@ def generate_json_report(
     vms: List[VM],
     provider: Optional[str],
     provider_pricing: Dict,
+    cloud: str = "",
+    gpu_reservations: Optional[Dict[str, Dict]] = None,
+    quota: Optional[Dict] = None,
+    vms_filtered: bool = False,
 ) -> str:
-    """Generate a JSON report"""
+    """Generate a JSON report with optional reservation section"""
     totals = calculate_totals(vms, provider)
     vms_data = []
 
@@ -973,6 +1279,25 @@ def generate_json_report(
         "vms": vms_data,
         "summary": summary,
     }
+
+    # Add reservation section if available
+    reservation = None
+    if cloud and gpu_reservations and not vms_filtered:
+        reservation = calculate_reservation_totals(cloud, gpu_reservations, quota)
+
+    if reservation:
+        report["reservation"] = {
+            "instances": reservation["vms"],
+            "cores": reservation["cores"],
+            "ram_gb": round(reservation["ram_gb"], 2),
+            "storage": {
+                "boot_gb": reservation["boot_storage_gb"],
+                "additional_gb": reservation["additional_storage_gb"],
+                "total_gb": reservation["total_storage_gb"],
+            },
+            "gpus": reservation["gpus"],
+            "cost_openstack": round(reservation["os_cost"], 2),
+        }
 
     return json.dumps(report, indent=2)
 
@@ -1095,9 +1420,26 @@ def generate_summary_report(
     provider: Optional[str],
     provider_display: str,
     provider_pricing: Dict,
+    cloud: str = "",
+    gpu_reservations: Optional[Dict[str, Dict]] = None,
+    quota: Optional[Dict] = None,
+    vms_filtered: bool = False,
 ) -> str:
     """Generate a summary report with resource counts and total costs"""
     headers = ["Unit", "Count", "OS Cost"]
+
+    # Calculate reservation totals if available
+    # But skip if VMs are filtered (reservation data is for all VMs in quota)
+    reservation = None
+    if cloud and gpu_reservations and not vms_filtered:
+        reservation = calculate_reservation_totals(cloud, gpu_reservations, quota)
+
+    # Add reservation headers if available (only when no provider comparison and VMs not filtered)
+    if reservation and not provider:
+        headers.append("Reservation")
+        headers.append("Difference")
+        headers.append("Reservation Cost")
+        headers.append("Reservation Difference")
 
     # Add comparison headers if provider specified
     if provider:
@@ -1112,7 +1454,11 @@ def generate_summary_report(
         return 0
 
     # Calculate total resources
-    total_cores = sum(vm.cores for vm in vms)
+    # Subtract GPU cores from total cores (GPU cores shouldn't be counted as CPU cores)
+    total_cores_with_gpu = sum(vm.cores for vm in vms)
+    gpu_cores = sum(vm.cores for vm in vms if vm.gpu_type)
+    total_cores = total_cores_with_gpu - gpu_cores
+
     total_additional_storage = sum(vm.additional_storage_gb for vm in vms)
     total_gpus = sum(vm.gpu_count for vm in vms)
 
@@ -1143,6 +1489,27 @@ def generate_summary_report(
         else "N/A",  # 11 chars for "   OS Cost"
     ]
 
+    if reservation and not provider:
+        # Show reservation count and difference (only when no provider comparison)
+        cores_row.append(str(reservation.get("cores", 0)))
+        diff = reservation.get("cores", 0) - total_cores
+        cores_row.append(f"+{diff}" if diff > 0 else str(diff))
+
+        # Show reservation CPU cost and difference
+        # Calculate CPU compute cost for reservation (cores * per-core price)
+        cpu_price_per_core = 0
+        for flavor_name, flavor_data in provider_pricing.get("openstack", {}).items():
+            if flavor_data.get("cores", 0) > 0 and flavor_data.get("price", 0) > 0:
+                cpu_price_per_core = flavor_data.get("price", 0) / flavor_data.get(
+                    "cores", 1
+                )
+                break
+
+        res_cpu_cost = reservation.get("cores", 0) * cpu_price_per_core
+        cores_row.append(format_price(res_cpu_cost) if res_cpu_cost > 0 else "")
+        diff = res_cpu_cost - os_compute_cost
+        cores_row.append(format_price(diff))
+
     if provider:
         cores_row.append(
             format_price(comparison_compute_cost) if comparison_compute_cost else "-"
@@ -1157,14 +1524,26 @@ def generate_summary_report(
     rows.append(cores_row)
 
     # RAM row
-    total_ram = int(sum(vm.ram_gb for vm in vms))
+    # Subtract GPU memory from total RAM (GPU memory shouldn't be counted as CPU RAM)
+    total_ram_with_gpu = sum(vm.ram_gb for vm in vms)
+    # Get GPU RAM from GPU VMs
+    gpu_ram_gb = sum(vm.ram_gb for vm in vms if vm.gpu_type)
+    total_ram = int(total_ram_with_gpu - gpu_ram_gb)
+
     ram_row = [
         "RAM (GB)",
         str(total_ram),
-        "-",  # OS Cost column width
+        "",  # OS Cost column (blank for non-cost rows)
     ]
+    if reservation and not provider:
+        # Show reservation RAM count and difference (only when no provider comparison)
+        ram_row.append(str(int(reservation.get("ram_gb", 0))))
+        diff = int(reservation.get("ram_gb", 0)) - total_ram
+        ram_row.append(f"+{diff}" if diff > 0 else str(diff))
+        # Add blank Reservation Cost columns
+        ram_row.extend(["", ""])
     if provider:
-        ram_row.extend(["-", "-"])
+        ram_row.extend(["", ""])  # No cost values for RAM row
     rows.append(ram_row)
 
     # Storage row
@@ -1202,6 +1581,41 @@ def generate_summary_report(
         format_price(os_storage_cost) if os_storage_cost > 0 else "-",
     ]
 
+    if reservation and not provider:
+        # Always show reservation storage count and difference (only when no provider comparison)
+        res_boot = reservation.get("boot_storage_gb", 0)
+        res_additional = reservation.get("additional_storage_gb", 0)
+        if res_additional > 0:
+            res_storage_display = f"{res_boot} + {res_additional}"
+        else:
+            res_storage_display = str(res_boot)
+        storage_row.append(res_storage_display)
+        diff = reservation.get("total_storage_gb", 0) - total_storage
+        storage_row.append(f"+{diff}" if diff > 0 else str(diff))
+
+        # Show reservation storage cost and difference
+        # Calculate storage cost for reservation (pay for all storage: boot + additional)
+        storage_price = (
+            provider_pricing.get("openstack", {})
+            .get("flash", {})
+            .get("storage_price", 0.14)
+        )
+        # Get storage price from any flavor (they all have the same storage price)
+        for flavor_data in provider_pricing.get("openstack", {}).values():
+            storage_price = flavor_data.get("storage_price", 0.14)
+            break
+
+        # Cost is for total storage (boot + additional)
+        res_total_storage = reservation.get("boot_storage_gb", 0) + reservation.get(
+            "additional_storage_gb", 0
+        )
+        res_storage_cost = res_total_storage * storage_price
+        storage_row.append(
+            format_price(res_storage_cost) if res_storage_cost > 0 else ""
+        )
+        diff = res_storage_cost - os_storage_cost
+        storage_row.append(format_price(diff))
+
     if provider:
         storage_row.append(
             format_price(comparison_storage_cost)
@@ -1217,13 +1631,35 @@ def generate_summary_report(
 
     rows.append(storage_row)
 
-    # GPUs row (if any VMs have GPUs)
-    if total_gpus > 0:
+    # GPUs row (if any VMs have GPUs or reservation has GPUs)
+    if total_gpus > 0 or (reservation and reservation.get("gpus", 0) > 0):
         gpu_row = [
             "GPUs",
             str(total_gpus),
             format_price(os_gpu_compute_cost) if os_gpu_compute_cost > 0 else "-",
         ]
+        if reservation and not provider:
+            # Show reservation GPU count and difference (only when no provider comparison)
+            gpu_row.append(str(reservation.get("gpus", 0)))
+            diff = reservation.get("gpus", 0) - total_gpus
+            gpu_row.append(f"+{diff}" if diff > 0 else str(diff))
+
+            # Show reservation GPU compute cost and difference
+            # Calculate GPU compute cost for reservation
+            a100_specs = provider_pricing.get("openstack", {}).get("gpu.a100.x1", {})
+            v100_specs = provider_pricing.get("openstack", {}).get("gpu.v100.1", {})
+
+            a100_count = reservation.get("a100_count", 0)
+            v100_count = reservation.get("v100_count", 0)
+            a100_price = a100_specs.get("price", 0)
+            v100_price = v100_specs.get("price", 0)
+
+            res_gpu_compute_cost = (a100_count * a100_price) + (v100_count * v100_price)
+            gpu_row.append(
+                format_price(res_gpu_compute_cost) if res_gpu_compute_cost > 0 else ""
+            )
+            diff = res_gpu_compute_cost - os_gpu_compute_cost
+            gpu_row.append(format_price(diff))
         if provider:
             gpu_row.append(
                 format_price(comparison_gpu_compute_cost)
@@ -1242,10 +1678,17 @@ def generate_summary_report(
     vm_row = [
         "VMs",
         str(len(vms)),
-        "-",  # OS Cost column width
+        "",  # OS Cost column (blank for non-cost rows)
     ]
+    if reservation and not provider:
+        # Show reservation VM count and difference (only when no provider comparison)
+        vm_row.append(str(reservation.get("vms", 0)))
+        diff = reservation.get("vms", 0) - len(vms)
+        vm_row.append(f"+{diff}" if diff > 0 else str(diff))
+        # Add blank Reservation Cost columns
+        vm_row.extend(["", ""])
     if provider:
-        vm_row.extend(["-", "-"])
+        vm_row.extend(["", ""])  # No cost values for VMs row
     rows.append(vm_row)
 
     # Total costs row (sum of all components: CPU compute + storage + GPU compute)
@@ -1262,6 +1705,17 @@ def generate_summary_report(
         format_price(total_os_cost) if total_os_cost else "N/A",
     ]
 
+    if reservation and not provider:
+        # Show reservation total cost and difference (only when no provider comparison)
+        # Note: Total Cost row doesn't show Reservation count/difference, only costs
+        # So we add empty string for those first two columns, then add cost columns
+        total_row.append("")  # Reservation count column (empty)
+        total_row.append("")  # Difference column (empty)
+        res_total_cost = reservation.get("os_cost", 0)
+        total_row.append(format_price(res_total_cost) if res_total_cost > 0 else "")
+        diff = res_total_cost - total_os_cost
+        total_row.append(format_price(diff))
+
     if provider:
         total_row.append(
             format_price(total_comparison_cost) if total_comparison_cost else "-"
@@ -1276,11 +1730,15 @@ def generate_summary_report(
     rows.append(total_row)
 
     # Use tabulate with proper column alignment
-    # Columns: Unit, Count, OS Cost, [Provider Cost], [Difference]
+    # Columns: Unit, Count, OS Cost, [Reservation, Difference, Reservation Cost, Reservation Difference] OR [Provider Cost, Difference]
+    num_cols = 3  # Unit, Count, OS Cost
+    if reservation and not provider:
+        num_cols += (
+            4  # Reservation, Difference, Reservation Cost, Reservation Difference
+        )
     if provider:
-        colalign = ("right", "right", "right", "right", "right")
-    else:
-        colalign = ("right", "right", "right")
+        num_cols += 2  # Provider Cost, Difference
+    colalign = tuple(["right"] * num_cols)
 
     return tabulate(rows, headers=headers, tablefmt="grid", colalign=colalign)
 
@@ -1334,6 +1792,9 @@ def main():
     print("Loading prices from pricing.csv", file=sys.stderr)
     provider_pricing = load_all_pricing_data()
 
+    # Load GPU reservations
+    gpu_reservations = load_gpu_reservations()
+
     # List VMs (with caching)
     # Note: OpenStack connection will be created lazily on first call to list_vms()
     if args.vms:
@@ -1341,7 +1802,7 @@ def main():
             print(f"Listing VMs matching: {args.vms[0]}", file=sys.stderr)
         else:
             print(f"Listing VMs: {', '.join(args.vms)}", file=sys.stderr)
-        vms = list_vms(
+        vms, quota = list_vms(
             args.cloud,
             vm_filter=args.vms,
             cache_dir=args.cache_dir,
@@ -1349,7 +1810,7 @@ def main():
         )
     else:
         print("Listing VMs", file=sys.stderr)
-        vms = list_vms(
+        vms, quota = list_vms(
             args.cloud,
             vm_filter=None,
             cache_dir=args.cache_dir,
@@ -1381,15 +1842,35 @@ def main():
     for fmt in formats:
         if fmt == "table":
             output_data["table"] = generate_table_report(
-                vms, comparison_provider, provider_display, provider_pricing
+                vms,
+                comparison_provider,
+                provider_display,
+                provider_pricing,
+                cloud=args.cloud,
+                gpu_reservations=gpu_reservations,
+                quota=quota,
+                vms_filtered=bool(args.vms),
             )
         elif fmt == "csv":
             output_data["csv"] = generate_csv_report(
-                vms, comparison_provider, provider_display, provider_pricing
+                vms,
+                comparison_provider,
+                provider_display,
+                provider_pricing,
+                cloud=args.cloud,
+                gpu_reservations=gpu_reservations,
+                quota=quota,
+                vms_filtered=bool(args.vms),
             )
         elif fmt == "json":
             output_data["json"] = generate_json_report(
-                vms, comparison_provider, provider_pricing
+                vms,
+                comparison_provider,
+                provider_pricing,
+                cloud=args.cloud,
+                gpu_reservations=gpu_reservations,
+                quota=quota,
+                vms_filtered=bool(args.vms),
             )
         elif fmt == "md":
             output_data["md"] = generate_md_report(
@@ -1397,7 +1878,14 @@ def main():
             )
         elif fmt == "summary":
             output_data["summary"] = generate_summary_report(
-                vms, comparison_provider, provider_display, provider_pricing
+                vms,
+                comparison_provider,
+                provider_display,
+                provider_pricing,
+                cloud=args.cloud,
+                gpu_reservations=gpu_reservations,
+                quota=quota,
+                vms_filtered=bool(args.vms),
             )
 
     # Output results

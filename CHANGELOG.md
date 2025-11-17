@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2025-11-16
+
+### Added
+- GPU reservations feature: `load_gpu_reservations()` function to load GPU reservations from gpu.csv
+- OpenStack quota fetching: `get_openstack_quotas()` function to fetch resource quotas from OpenStack
+- Reservation calculations: `calculate_reservation_totals()` function to calculate reserved resources and costs
+- Quota caching: Store and retrieve quotas alongside VMs in cache for performance
+- `gpu.csv` file with GPU reservations per cloud (A100 and V100 counts)
+- Reservation display in all report formats (table, CSV, JSON, summary)
+- `vms_filtered` parameter to skip reservation display when VMs are filtered
+- Comprehensive GPU reservations documentation and release process in CLAUDE.md
+
+### Changed
+- Updated `format_price()` to always display prices including $0.00 (no more hyphens for zero values)
+- Modified `list_vms()` to return tuple of (vms, quota) instead of just vms
+- Updated `load_cache()` and `save_cache()` to handle quota data
+- All report functions now accept `cloud`, `gpu_reservations`, `quota`, and `vms_filtered` parameters
+- Summary report now shows Reservation and Difference columns when no provider comparison is specified
+- Table, CSV, and JSON reports now include RESERVATION row with reserved resources
+
+### Fixed
+- GPU cores and memory now properly subtracted from total to avoid double-counting
+- Reservation calculations handle missing clouds in gpu.csv as having 0 GPUs
+- Reservation data only shown when no provider comparison is specified (avoids confusion with filtered VMs)
+
+### Performance
+- Quotas cached with same TTL as VM cache (default 24 hours)
+- GPU reservations loaded once and cached in global variable
+
 ## [2.3.0] - 2025-11-15
 
 ### Added

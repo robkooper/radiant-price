@@ -1051,10 +1051,69 @@ The codebase has evolved through several major simplifications:
 
 See [CHANGELOG.md](CHANGELOG.md) for complete version history.
 
+## Release Process
+
+**IMPORTANT: You can ONLY create a release if the user explicitly asks you to do so.**
+
+When a user requests a release:
+
+### Step 1: Show the Plan
+Before making any changes, present the release plan:
+- Current version (from git tags)
+- New version number (semantic versioning)
+- Changes to include (from CHANGELOG.md [Unreleased] section)
+- Ask for confirmation before proceeding
+
+### Step 2: Verify Everything is Committed
+```bash
+git status  # Ensure no uncommitted changes
+```
+
+If there are uncommitted changes, ask the user to review them or commit them before proceeding.
+
+### Step 3: Update CHANGELOG.md
+1. Move all items from `[Unreleased]` section to new version section
+2. Add release date (today's date)
+3. Update document version and last updated date in CLAUDE.md
+4. Commit changes: `git add CHANGELOG.md CLAUDE.md && git commit -m "Release v2.X.X"`
+
+### Step 4: Create Git Tag
+```bash
+git tag -a vX.X.X -m "Release vX.X.X: <description of changes>"
+```
+
+### Step 5: Push to GitHub
+```bash
+git push origin main
+git push origin vX.X.X
+```
+
+### Step 6: Create GitHub Release
+```bash
+gh release create vX.X.X --title "vX.X.X" --notes-file CHANGELOG.md
+```
+
+The `gh` command will automatically create a release on GitHub using the tag and changelog notes.
+
+### Semantic Versioning Guidelines
+- **MAJOR** (v2.0.0): Breaking changes to CLI or API
+- **MINOR** (v2.1.0): New features, backward compatible
+- **PATCH** (v2.1.1): Bug fixes only
+
+### Example Workflow
+```bash
+# 1. Show plan to user (get confirmation)
+# 2. Check git status
+# 3. Update CHANGELOG.md and CLAUDE.md
+# 4. git tag -a v2.4.0 -m "Release v2.4.0: GPU reservations feature"
+# 5. git push origin main && git push origin v2.4.0
+# 6. gh release create v2.4.0 --title "v2.4.0" --notes-file CHANGELOG.md
+```
+
 ---
 
-**Document Version:** 2.3
-**Last Updated:** 2025-11-15
+**Document Version:** 2.4
+**Last Updated:** 2025-11-16
 **Maintained By:** AI Assistants (Claude)
 **Status:** Production Ready
 
